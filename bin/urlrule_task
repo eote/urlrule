@@ -22,8 +22,8 @@ my $TASK_DATABASE   = "DATABASE.URL";
 my $HOST_DATABASE = "HOSTS.URL";
 $TASK_DATABASE = $URLRULE_DIRECTORY . '/database/' . $TASK_DATABASE unless(-f $TASK_DATABASE);
 $HOST_DATABASE = $URLRULE_DIRECTORY . '/database/' . $HOST_DATABASE unless(-f $HOST_DATABASE);
-my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 3 -f';
-my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 3 -f';
+my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f';
+my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
 use MyPlace::Config;
@@ -202,7 +202,7 @@ sub action_DOWNLOAD {
     my $Names = MyPlace::Config->new();
     $Names->read_plainfile($TASK_DATABASE);
     $Names->propset(scalar(localtime),$name,$id,$host,"last");
-    print STDERR "Saving $TASK_DATABASE...\n";
+    app_message("Saving $TASK_DATABASE...\n");
     $Names->write_plainfile($TASK_DATABASE);
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
@@ -249,9 +249,9 @@ sub action_FEED {
     my $Names = MyPlace::Config->new();
     $Names->read_plainfile($TASK_DATABASE);
     $Names->propset(scalar(localtime),$name,$id,$host,"last");
-    print STDERR "Saving $TASK_DATABASE...\n";
+    app_prompt('Saving database',$TASK_DATABASE,"\n");
     $Names->write_plainfile($TASK_DATABASE);
-    app_message("Processing $name/$host\n");
+    app_prompt('Processing task',"$name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
     if($host =~ /google|baidu|yahoo|sogua/) {
         load_rule("$name/$hostname",$url,$level,$U_DOWNLOADER);
@@ -334,10 +334,12 @@ unless($phnd->length) {
     app_error("Nothing to do!\n");
     exit 0;
 }
-
+my $idx = 0;
 while(my $tasks = $phnd->length) {
-    app_error("[$tasks] tasks remained\n");
+	$idx ++;
+	app_prompt("[" . localtime . "]",color('RED'),$idx,color('CYAN')," tasks fininshed, ",color('RED'),$tasks,color('CYAN')," remained.\n");
     $phnd->run();
+		 #app_ok("[$idx/$tasks]Finished : ",scalar(localtime),"\n");
 }
 app_message "All tasks completed.\n";
 unlink TASK_FILE_RESUME if(-f TASK_FILE_RESUME);
