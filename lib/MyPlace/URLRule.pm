@@ -3,6 +3,7 @@ package MyPlace::URLRule;
 use URI;
 use URI::Escape;
 use MyPlace::Script::Message;
+#use Term::ANSIColor;
 use MyPlace::Curl;
 use strict;
 use Cwd;
@@ -67,7 +68,7 @@ sub change_directory {
     my $path = shift;
     return 1 unless($path);
     if(! -d $path) {
-        app_message("Creating directory \"$path\"...");
+        app_prompt("Creating directory",$path);
         if(mkdir $path) {
             print STDERR "\t[OK]\n";
         }
@@ -76,7 +77,7 @@ sub change_directory {
             return undef;
         }
     }
-    app_message("Changing directory to \"$path\"...");
+    app_prompt("Changing directory",$path);
     if(chdir $path) {
         print STDERR "\t[OK]\n";
     }
@@ -214,6 +215,16 @@ sub parse_rule {
     return \%r;
 }
 
+sub color_quote {
+	my($pre,$text,$suf,$color,$reset) = @_;
+	$pre="" unless($pre);
+	$text="" unless($text);
+	$suf="" unless($suf);
+	$color="WHITE" unless($color);
+	$reset="RESET" unless($reset);
+	return color($reset) .  "$pre\"" . color($color) . $text . color($reset) . "\"$suf";
+}
+
 sub apply_rule {
     my $rule = shift;
     unless($rule and ref $rule and %{$rule}) {
@@ -223,19 +234,21 @@ sub apply_rule {
     my $level = $rule->{level};
     my $url = $rule->{url};
     my $source = $rule->{"source"};
-    my $msghd = "Level $level>>";
-    app_message($msghd,"For \"$url\" ...\n");
-    app_message($msghd,"Found rule: \"$source\"\n");
+    my $msghd = "[Level $level]";
+    app_prompt($msghd . 'Incoming URL',color('YELLOW'),"$url\n");
+    app_prompt($msghd . 'Found rule',color('YELLOW'),"$source\n");
     unless(-f $source) {
-        app_error($msghd,"File not found: $source\n");
+        app_error($msghd,color_quote("File not found: ",$source,"\n",'YELLOW','CYAN'));
         return undef;
     }
-    app_message($msghd,"Applying it...\n");
+    app_prompt($msghd . "Applying rule", "...\n");
     package MyPlace::URLRule::File;
+	no warnings;
+	no strict qw/subs/;
     my $do_exit = do $source;
     package MyPlace::URLRule;
     if($@) {
-        app_error($msghd, "couldn't parse $source:\n$@");
+        app_error($msghd, color_quote("Couldn't parse ",'RED',$source,"\n$@"));
         return undef;
     }
     my @result = MyPlace::URLRule::File::apply_rule($url,$rule);
@@ -245,6 +258,9 @@ sub apply_rule {
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);
     }
+	foreach(@{$result{pass_data}},@{$result{data}}) {
+		s/&amp;/&/g;
+	}
     if($result{work_dir}) {
         $result{work_dir} = &unescape_text($result{work_dir});
     }
@@ -262,7 +278,7 @@ sub urlrule_do_action {
     if(ref $result{data} eq 'SCALAR') {
         $result{data} = [$result{data}];
     }
-    app_message("Do Action>>",getcwd,"\n");
+    app_prompt("Do Action",getcwd,"\n");
     my $file=$result{file};
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
     my $pipeto=$action ? $action : $result{action};
@@ -275,7 +291,7 @@ sub urlrule_do_action {
             open FO,">:utf8",$file or die("$!\n");
             print FO @{$result{data}};
             close FO;
-            return 1,$msg . "Action File ($file) OK.";
+            return 1,$msg . color_quote("Action File ",$file," OK.","YELLOW","CYAN");
         }
     }
     elsif($action and $action eq 'dump') {
@@ -292,7 +308,7 @@ sub urlrule_do_action {
             print FO $line,"\n";
         }
         close FO;
-        return 1,$msg . "Action Pipeto ($pipeto) OK.";
+        return 1,$msg . color_quote("Action Pipeto ",$pipeto," OK.","YELLOW","CYAN");
     }
     elsif($result{hook}) {
         my $index=0;
@@ -323,7 +339,7 @@ sub urlrule_get_passdown {
     return unless($result_ref->{pass_data});
     my %rule = %{$rule_ref};
     my %result = %{$result_ref};
-    my $level = $result{level} ? $result{level} : $result{same_level} ? $rule{"level"} : $rule{"level"} - 1;
+    my $level = defined $result{level} ? $result{level} : $result{same_level} ? $rule{"level"} : $rule{"level"} - 1;
     my $action = $rule{"action"};
     my @args = $rule{"args"} ? @{$rule{"args"}} : ();
     if(ref $result{pass_data} eq 'SCALAR') {
@@ -388,26 +404,33 @@ sub urlrule_quick_parse {
     my @data;
     my @pass_data;
     my @pass_name;
+	my %h_data;
+	my %h_pass;
     $data_map = '$1' unless($data_map);
     $pass_map = '$1' unless($pass_map);
+	my %LOCAL_VAR;
     $pass_name_map = $pass_name_exp unless($pass_name_map);
     if($title_exp) {
         $title_map = '$1' unless($title_map);
         if($html =~ m/$title_exp/g) {
-            $title = eval($title_map);
+            $title = eval $title_map;
         }
     }
     if($data_exp) {
         while($html =~ m/$data_exp/g) {
-            push @data,eval($data_map);
+			my $r = eval $data_map;
+			next if($h_data{$r});
+            push @data,$r;
+			$h_data{$r} = 1;
         }
     }
     if($pass_exp) {
         while($html =~ m/$pass_exp/g) {
-            push @pass_data,eval($pass_map);
-            if($pass_name_map) {
-                push @pass_name,eval($pass_name_map);
-            }
+            my $r = eval $pass_map;
+			next if($h_pass{$r});
+            push @pass_data,$r;
+			$h_pass{$r} = 1;
+            push @pass_name,eval $pass_name_map if($pass_name_map);
         }
     }
     elsif($pages_exp) {
@@ -417,9 +440,9 @@ sub urlrule_quick_parse {
         my $suf = "";
         while($html =~ m/$pages_exp/g) {
             if(eval($pages_map) > $last) {
-                    $last = eval($pages_map);
-                    $pre = eval($pages_pre) if($pages_pre);
-                    $suf = eval($pages_suf) if($pages_suf);
+                    $last = eval $pages_map;
+                    $pre = eval $pages_pre  if($pages_pre);
+                    $suf = eval $pages_suf if($pages_suf);
             }
         }
         if($last >= $pages_start) {
@@ -427,8 +450,9 @@ sub urlrule_quick_parse {
         }
         push @pass_data,$url;
     }
-    @data = delete_dup(@data) if(@data);
-    @pass_data = delete_dup(@pass_data) if(@pass_data and (!@pass_name));
+#	use Data::Dumper;die(Dumper(\%h_pass));
+#    @data = delete_dup(@data) if(@data);
+#    @pass_data = delete_dup(@pass_data) if(@pass_data and (!@pass_name));
     return (
         count=>scalar(@data),
         data=>[@data],
@@ -445,7 +469,7 @@ sub urlrule_quick_parse {
 
 sub callback_process_result {
     my $from = shift;
-    app_message("process_result, callback from $from\n") if($from);
+    app_prompt("Process result callback","$from\n") if($from);
     if($CALLBACK{process_result}) {
         &{$CALLBACK{process_result}}(@_);
     }
@@ -456,7 +480,7 @@ sub callback_process_result {
 
 sub callback_process_data {
     my $from = shift;
-    app_message("process_data, callback from $from\n") if($from);
+    app_prompt("Process data callback","$from\n") if($from);
     if($CALLBACK{process_data}) {
         &{$CALLBACK{process_data}}(@_);
     }
@@ -466,7 +490,7 @@ sub callback_process_data {
 }
 sub callback_process_passdown {
     my $from = shift;
-    app_message("process_passdown, callback from $from\n") if($from);
+    app_prompt("Process passdown callback","$from\n") if($from);
     if($CALLBACK{process_passdown}) {
         &{$CALLBACK{process_passdown}}(@_);
     }
@@ -476,7 +500,7 @@ sub callback_process_passdown {
 }
 sub callback_do_action {
     my $from = shift;
-    app_message("callback:$from\n") if($from);
+    app_prompt("Callback","$from\n") if($from);
     if($CALLBACK{process_do_action}) {
         &{$CALLBACK{process_do_action}}(@_);
     }
@@ -503,15 +527,15 @@ sub urlrule_process_data {
     my @args = $rule{"args"} ? @{$rule{"args"}} : ();
     my $msghd = $result{work_dir} ? "[". $result{work_dir} . "]" : "";
     my $count = @{$result{data}};
-    app_message($msghd , "Level $level>>","Get $count Lines\n");
+    app_prompt($msghd . "[Level $level]","Get data lines",color('RED'),"$count\n");
     #,performing action $action..\n");
     my ($status,@message) = callback_do_action(undef,$result_ref,$action,@args);
     if($status) {
-        app_message($msghd,"Level $level>>",@message,"\n");
+        app_prompt($msghd . "[Level $level]",@message,"\n");
         return 1;
     }
     else {
-        app_warning($msghd,"Level $level>>",@message,"\n");
+        app_prompt($msghd . "[Level $level]",color('READ'),@message,"\n");
         return undef;
     }
 }
@@ -528,7 +552,7 @@ sub urlrule_process_passdown {
     my ($count,@passdown) = urlrule_get_passdown($rule_ref,$result_ref);
     my $level = $rule_ref->{level};
     if($count) {
-        app_message($msghd,"Level $level>>","Get $count rules to pass down\n");
+        app_prompt($msghd . "[Level $level]" . "Get URLS to pass down",$count,"\n");
     }
     else {
         return undef;
@@ -585,16 +609,16 @@ sub urlrule_process_result
         @args = @{$rule->{args}} if($rule->{args});
     }
     my $count = $result->{data} ? @{$result->{data}} : 0;
-        app_message("Level $level>>","Get $count Lines\n");
+        app_prompt("[Level $level]" . "Get data Lines",color('RED'),"$count\n");
         my($action_status,$action_message) = callback_do_action(undef,$result,$action,@args);
         if($action_status) {
-            app_message "Level $level>>$action_message\n";
+            app_prompt "[Level $level]","$action_message\n";
         }
         else {
-            app_warning "Level $level>>$action_message\n" if($action_message);
+            app_prompt "[Level $level]",color('YELLOW'),"$action_message\n" if($action_message);
         }
     my ($pass_count,@pass_args) = urlrule_get_passdown($rule,$result);
-    app_message "Level $level>>", "Get $pass_count rules to pass down\n" if($pass_count);
+    app_prompt "[Level $level]" .  "Get URLs rules to pass down","$pass_count\n" if($pass_count);
     return 1,$pass_count,@pass_args;
 }
 
