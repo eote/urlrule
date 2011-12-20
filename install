@@ -1,0 +1,20 @@
+#!/usr/bin/perl -w
+use strict;
+use File::Spec::Functions;
+my $dst_bin = shift || "/myplace/workspace/perl"; 
+my $dst_lib = shift || "/$dst_bin/modules"; 
+
+sub run {
+	system(@_) == 0;
+}
+
+foreach(glob("bin/*")) {
+	print STDERR $_,"\n";
+	run('cp','-av','--',$_,"$dst_bin/");
+}
+
+foreach(glob("lib/*")) {
+	print STDERR $_,"\n";
+	run('cp','-av','--',$_,"$dst_lib/");
+}
+
