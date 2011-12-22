@@ -13,44 +13,34 @@ use MyPlace::Script::Usage qw/help_required help_even_empty/;
 exit 0 if(help_required($0,@ARGV));
 
 use MyPlace::Script::Message;
-use MyPlace::URLRule;
+use MyPlace::URLRule::OO;
+#Processor;
 use MyPlace::ReEnterable;
 use Cwd qw/getcwd/;
 
-urlrule_set_callback('process_passdown',\&process_passdown);
+#urlrule_set_callback('process_passdown',\&process_passdown);
 
 my $RESUME_FILE = '.urlrule_resume';
 my $phnd = MyPlace::ReEnterable->new('main');
 my $cwd = getcwd();
 $SIG{INT} = \&sig_killed;
 
+my $RULE = new MyPlace::URLRule::OO(
+		buildurl=>1,
+		createdir=>1,
+		callback_nextlevel=>\&process_passdown,
+);
+
 sub process_passdown {
-    my ($count,@passdown) = urlrule_get_passdown(@_);
+	my ($resp) = @_;
     my $cwd = getcwd();
-    if($count) {
-        app_message("Get $count rules to pass down\n");
-    }
-    else {
-        return undef;
-    }
-    foreach(@passdown) {
-        $phnd->push($cwd,'load_rule',@{$_});
-    }
+	$phnd->push($cwd,'load_rule',@{$resp}{qw/title url level action/});
 }
 
 sub load_rule {
     my $cwd = getcwd();
-    my ($status1,$rule,$result) = urlrule_process_args(@_);
-    if($status1) {
-        my($status2,$pass_count,@passdown)
-            = urlrule_process_result($rule,$result);
-        if($status2 and $pass_count and $pass_count>0) {
-            my $cwd = getcwd();
-            foreach(@passdown) {
-                $phnd->push($cwd,'load_rule',@{$_});
-            }
-        }
-    }
+	my ($title,$url,$level,$action) = @_;
+	$RULE->autoApply($url,$level,$action,$title);
     chdir $cwd;
 }
 
