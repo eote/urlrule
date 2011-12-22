@@ -13,36 +13,18 @@ use lib $ENV{XR_PERL_MODULE_DIR};
 use MyPlace::Script::Usage qw/help_even_empty/;
 exit 0 if(help_even_empty($0,@ARGV));
 
-use MyPlace::Script::Message;
-use MyPlace::URLRule qw/parse_rule apply_rule urlrule_set_callback/;
+use MyPlace::URLRule qw/parse_rule apply_rule/;
 use Data::Dumper;
-
-
-sub process_passdown {
-    print STDERR Data::Dumper->Dump([$_[1]],['*callback_passdown']);
-}
-
-sub process_data {
-    print STDERR Data::Dumper->Dump([$_[1]],['*callback_result']);
-}
-
-sub process_result {
-    print STDERR Data::Dumper->Dump([$_[1]],['*callback_data']);
-}
-urlrule_set_callback("process_passdown",\&process_passdown);
-urlrule_set_callback("process_data",\&process_data);
-urlrule_set_callback("process_result",\&process_result);
 
 my $rule = parse_rule(@ARGV);
 print STDERR Data::Dumper->Dump([$rule],['*rule']);
-
-my $result = apply_rule($rule);
-if($result and ref $result) {
+my ($status,$result) = apply_rule($rule);
+if($status and ref $result) {
         print STDERR Data::Dumper->Dump([$result],['result']);
         exit 0;
 }
 else {
-    app_error("Error: result contians nothing\n");
+    print STDERR ("Error: result contians nothing\n");
     exit 1;
 }
 
