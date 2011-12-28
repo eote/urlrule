@@ -1,9 +1,19 @@
 package MyPlace::URLRule::OO;
-use MyPlace::URLRule qw/parse_rule apply_rule/;
+use MyPlace::URLRule qw/parse_rule apply_rule @URLRULE_LIB/;
 use strict;
 use warnings;
 use Cwd qw/getcwd/;
 use MyPlace::Script::Message;
+
+sub lib {
+	my $self = shift;
+	if(@_) {
+		@URLRULE_LIB = @_;
+	}
+	else {
+		return \@URLRULE_LIB;
+	}
+}
 
 sub new {
 	my $class = shift;
@@ -59,14 +69,6 @@ sub to_response {
 		$response{count} = scalar(@{$response{data}});
 		$response{action} = $rule->{action} unless($response{action});
 		$response{title} = $rule->{title} unless($response{title});
-		if($response{base} and $self->{request}->{buildurl}) {
-			@{$response{data}} = map {
-					URI->new_abs($_,$response{base})->as_string
-					} @{$response{data}};
-			@{$response{pass_data}} = map {
-					URI->new_abs($_,$response{base})->as_string
-					} @{$response{pass_data}};
-		}
 		unless(defined $response{level}) {
 			$response{level} = $rule->{level} if($response{samelevel});
 		}
@@ -127,18 +129,21 @@ sub autoApply {
 		@responses = @{$self->{response}};
 	}
 	push @responses,$result;
-	if($self->{request}->{createdir} && $res->{title}) {
-		$self->makedir($res->{title}) or die("$!\n");
-		$self->changedir($res->{title}) or die("$!\n");
-	}
+#	if($self->{request}->{createdir} && $res->{title}) {
+#		$self->makedir($res->{title}) or die("$!\n");
+#		$self->changedir($res->{title}) or die("$!\n");
+#	}
 	foreach my $response (@responses) {
 		my $cwd = getcwd;
 		$self->process($response,$rule);
 		if($response->{next_level}) {
 			my %next = %{$response->{next_level}};
-			app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n");
+			app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n") if($next{count});
 			my $idx = 0;
 			$self->{msghd} = "[Level $next{level}] ";
+			if($response->{base} and $self->{request}->{buildurl}) {
+				map {$_ = URI->new_abs($_,$response->{base})->as_string} @{$next{data}};
+			}
 			foreach (@{$next{data}}) {
 				my $cwd = getcwd;
 				$self->processNextLevel({
@@ -212,6 +217,9 @@ sub process {
 		}
 	}
 	app_prompt($self->{msghd},"Get " . $response->{count} . " items\n");
+	if($response->{base} and $self->{request}->{buildurl}) {
+		map {$_ = URI->new_abs($_,$response->{base})->as_string;} @{$response->{data}};
+	}
 	if($self->{request}->{callback_action}) {
 		return $self->{request}->{callback_action}($self,$response->{data});
 	}
@@ -237,7 +245,7 @@ sub do_action {
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
 	my $action = $response->{pipeto} || $response->{action} || '';
 	{
-		my $base = $rule->{base} || $rule->{url};
+		my $base = $response->{base} || $rule->{base} || $rule->{url};
 		$action =~ s/#URLRULE_BASE#/$base/g;
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}

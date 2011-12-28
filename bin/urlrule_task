@@ -34,8 +34,8 @@ my $TASK_DATABASE   = "DATABASE.URL";
 my $HOST_DATABASE = "HOSTS.URL";
 #$TASK_DATABASE = $URLRULE_DIRECTORY . '/database/' . $TASK_DATABASE unless(-f $TASK_DATABASE);
 #$HOST_DATABASE = $URLRULE_DIRECTORY . '/database/' . $HOST_DATABASE unless(-f $HOST_DATABASE);
-my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f -r "#URLRULE_BASE#"';
-my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f -r "#URLRULE_BASE#"';
+my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f -r \'#URLRULE_BASE#\'';
+my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f -r \'#URLRULE_BASE#\'';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
 use MyPlace::Config;
@@ -309,16 +309,32 @@ if(@ARGV) {
     }
     my $Hosts = MyPlace::Config->new();
     $Hosts->read_plainfile($HOST_DATABASE);
-    my @targets =  $Names->query($query);
-    if(!@targets) {
-        app_error("Nothing match query $query\n");
-        exit 1;
-    }
+	my @queries = @ARGV;
+	unshift @queries,$query if($query);
+	if(!@queries) {
+		app_prompt('Reading QUERIES','from STDIN',"\n");
+		while(<STDIN>) {
+			chomp;
+			push @queries,$_ if($_);
+		}
+	}
+	@queries = ('/.*/') unless(@queries);
+	my @targets;
+	foreach(@queries) {
+		next unless($_);
+		my @r =  $Names->query($_);
+		if((!@r) and $_ !~ m/\/,/) {
+			@r = [[split(/\s*,\s*/,$_)],{newly=>{}},'newly'];	
+		}
+		push @targets,@r if(@r);
+	}
     my @records = $Names->get_records(@targets);
     my @tasks = convert_records($Hosts,\@records);
     if($action eq 'DOWNLOAD') {
         &init;
-        &log($action," - ",$query);
+		foreach(@queries) {
+			&log($action," - ",$_);
+		}
         foreach(@tasks) {
             $phnd->push($TASK_WORKDIR,"action_$action",$_);
         }

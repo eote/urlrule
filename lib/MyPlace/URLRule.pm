@@ -13,16 +13,18 @@ BEGIN {
     our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
-    @EXPORT_OK         = qw($URLRULE_DIRECTORY &parse_rule &apply_rule &get_domain &get_rule_dir set_callback);
+	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback/;
+    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &parse_rule &apply_rule &get_domain &get_rule_dir set_callback);
 }
 
 #my $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
 
 our $USER_URLRULE_DIRECTORY = "$ENV{HOME}/.urlrule";
 our $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
+our @URLRULE_LIB = (getcwd . "/urlrule",$USER_URLRULE_DIRECTORY,$URLRULE_DIRECTORY);
 
-unshift @INC,$URLRULE_DIRECTORY;
-unshift @INC,$USER_URLRULE_DIRECTORY;
+
+unshift @INC,@URLRULE_LIB;
 my %CALLBACK;
 sub unescape_text {
     my %ESCAPE_MAP = (
@@ -122,13 +124,10 @@ sub parse_rule {
     my $domain = $r{domain};
     do 
     {
-        for my $directory (
-            "$USER_URLRULE_DIRECTORY/$r{level}",
-            "$USER_URLRULE_DIRECTORY/common",
-            "$URLRULE_DIRECTORY/$r{level}",
-            "$URLRULE_DIRECTORY/common",
-            )
-        {
+        foreach my $directory (
+			map {("$_/$r{level}","$_/common")} @URLRULE_LIB
+		){
+#			print STDERR "Try $directory - $domain\n";
             next unless(-d $directory);
             for my $basename 
                     (
@@ -148,8 +147,16 @@ sub parse_rule {
             last if($r{source});
         }
     } while($domain =~ s/^[^\.]*\.// and !$r{source});
+	if(!$r{source}) {
+		foreach(@URLRULE_LIB) {
+			if(-d $_) {
+				$r{source} = "$_/$r{level}/$r{domain}";
+				last;
+			}
+		}
+	}
     $r{source} 
-        = "$USER_URLRULE_DIRECTORY/$r{level}/$r{domain}" unless($r{source});
+        = "urlrule/$r{level}/$r{domain}" unless($r{source});
     return \%r;
 }
 
@@ -185,10 +192,9 @@ sub apply_rule {
     unless(-f $source) {
 		return undef,"File not found: $source";
     }
-	my $tempname = "$url\:\:$level";
-	$tempname =~ s/^[^:]+\:|&.+$|\?.+$|#.+$//g;
-	$tempname =~ s/[\.\/\\]/::/g;
-	$tempname =~ s/^\:+//g;
+	my $tempname = rand(10);
+	$tempname =~ s/\./::/g;
+	$tempname = "MyPlace::URLRule::Eval::$tempname";
 eval<<"CODE";
 	package $tempname;
 	no warnings;
@@ -196,10 +202,10 @@ eval<<"CODE";
     do \$source;
 CODE
     package MyPlace::URLRule;
-    #if($@) {
-    #    return undef,"Couldn't parse ",'RED',$source,"\n$@";
-    #}
     my @result = eval $tempname . '::apply_rule($url,$rule);';
+    if($@) {
+        return undef,"Couldn't parse ",'RED',$source,"\n$@";
+    }
     return undef,'Nothing to do' unless(@result);
 	return undef,'Nothing to do'  unless($result[0]);
     my %result = @result;

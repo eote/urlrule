@@ -58,8 +58,16 @@ sub sig_killed {
 if(@ARGV) {
     $phnd->push($cwd,'load_rule',undef,@ARGV);
 }
-else {
+elsif(-f $RESUME_FILE) {
     $phnd->loadFromFile($RESUME_FILE);
+}
+else {
+	while(<STDIN>) {
+		chomp;
+		my $line = shift;
+		my @args = split($line,"\t");
+		$phnd->push($cwd,'load_rule',undef,@args);
+	}
 }
 while(my $tasks = $phnd->length) {
     app_error("[$tasks] tasks remained\n");

@@ -20,7 +20,7 @@ my $rule = parse_rule(@ARGV);
 print STDERR Data::Dumper->Dump([$rule],['*rule']);
 my ($status,$result) = apply_rule($rule);
 if($status and ref $result) {
-        print STDERR Data::Dumper->Dump([$result],['result']);
+        print Data::Dumper->Dump([$result],['result']);
         exit 0;
 }
 else {
