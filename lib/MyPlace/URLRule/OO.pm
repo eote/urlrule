@@ -55,7 +55,7 @@ sub request {
 	$request = {%{$self->{request}},%{$request}};
 	$request->{action} = 'COMMAND:echo' unless($request->{action});
 	my $rule = parse_rule(@{$request}{qw/url level action/});
-	$rule->{title} = $request->{title};
+	#$rule->{title} = $request->{title};
 	return ($rule,$request);
 }
 
@@ -68,7 +68,7 @@ sub to_response {
 		$response{data} = [] unless($response{data});
 		$response{count} = scalar(@{$response{data}});
 		$response{action} = $rule->{action} unless($response{action});
-		$response{title} = $rule->{title} unless($response{title});
+		#$response{title} = $rule->{title} unless($response{title});
 		unless(defined $response{level}) {
 			$response{level} = $rule->{level} if($response{samelevel});
 		}
@@ -129,10 +129,10 @@ sub autoApply {
 		@responses = @{$self->{response}};
 	}
 	push @responses,$result;
-#	if($self->{request}->{createdir} && $res->{title}) {
-#		$self->makedir($res->{title}) or die("$!\n");
-#		$self->changedir($res->{title}) or die("$!\n");
-#	}
+	if($self->{request}->{createdir} && $res->{title}) {
+		$self->makedir($res->{title}) or die("$!\n");
+		$self->changedir($res->{title}) or die("$!\n");
+	}
 	foreach my $response (@responses) {
 		my $cwd = getcwd;
 		$self->process($response,$rule);
