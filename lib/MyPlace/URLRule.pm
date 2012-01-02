@@ -207,7 +207,7 @@ CODE
         return undef,"Couldn't parse ",'RED',$source,"\n$@";
     }
     return undef,'Nothing to do' unless(@result);
-	return undef,'Nothing to do'  unless($result[0]);
+#	return undef,'Nothing to do'  unless($result[0]);
     my %result = @result;
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);

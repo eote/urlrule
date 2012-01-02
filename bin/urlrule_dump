@@ -13,9 +13,12 @@ use lib $ENV{XR_PERL_MODULE_DIR};
 use MyPlace::Script::Usage qw/help_even_empty/;
 exit 0 if(help_even_empty($0,@ARGV));
 
-use MyPlace::URLRule qw/parse_rule apply_rule/;
+use MyPlace::URLRule qw/parse_rule apply_rule set_callback/;
 use Data::Dumper;
 
+set_callback('apply_rule',sub {
+	print Data::Dumper->Dump([\@_],['*apply_rule']);
+});
 my $rule = parse_rule(@ARGV);
 print STDERR Data::Dumper->Dump([$rule],['*rule']);
 my ($status,$result) = apply_rule($rule);

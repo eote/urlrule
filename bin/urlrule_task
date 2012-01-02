@@ -32,6 +32,7 @@ my $phnd;
 my $TASK_LOGGING    = 1;
 my $TASK_DATABASE   = "DATABASE.URL";
 my $HOST_DATABASE = "HOSTS.URL";
+my $NAMES_DATABASE = "NAMES.db";
 #$TASK_DATABASE = $URLRULE_DIRECTORY . '/database/' . $TASK_DATABASE unless(-f $TASK_DATABASE);
 #$HOST_DATABASE = $URLRULE_DIRECTORY . '/database/' . $HOST_DATABASE unless(-f $HOST_DATABASE);
 my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f -r \'#URLRULE_BASE#\'';
@@ -39,8 +40,11 @@ my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f -r \'#URLRULE_BASE#\'';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
 use MyPlace::Config;
-my $Names = MyPlace::Config->new();
-$Names->read_plainfile($TASK_DATABASE);
+my $Database = MyPlace::Config->new();
+$Database->read_plainfile($TASK_DATABASE);
+use MyPlace::HashArray;
+my $Names = MyPlace::HashArray->read($NAMES_DATABASE);
+#print Data::Dumper->Dump([$Names],['*Names']),"\n";
 
 sub change_directory {
     my $path = shift;
@@ -83,6 +87,40 @@ sub load_rule {
     chdir $CWD;
 }
 
+sub name_exp {
+	my $exp = shift;
+	my @values = @_;
+	print STDERR @values,"=>";
+	if($exp =~ m/(\{([LlUu]?)[Nn][Aa]([^\w])?[Mm][Ee]\})/) {
+		my $m = $1;
+		my $case =$2 || "";
+		my $sp = $3;
+		foreach(@values) {
+			if($case eq 'L') {
+				$_ = lc($_);
+			}
+			elsif($case eq 'l') {
+				s/\b(.)/\L$1/g;
+			}
+			elsif($case eq 'U') {
+				$_ = uc($_);
+			}
+			elsif($case eq 'u') {
+				s/\b(.)/\U$1/g;
+			}
+			s/ /$sp/g if($sp);
+		}
+		$exp =~ s/\{[LlUu]?[Nn][Aa][^\w]?[Mm][Ee]\}/{name}/g;
+	}
+	if($exp =~ m/(.)\{name\}\1/) {
+		map {$_ = "$1$_$1";} @values;
+		$exp =~ s/(.)\{name\}\1/\{name\}/g;
+	}
+	my $rpl = join(" ",@values);
+	$exp =~s/\{name\}/$rpl/g;
+	return $exp;
+}
+
 sub convert_records {
     my ($Hosts,@records) = @_;
     my @r;
@@ -92,6 +130,13 @@ sub convert_records {
             next unless($name);
             next unless($id);
             next unless($host);
+			if($id =~ m/\{[LlUu]?[Nn][Aa][^\w]?[Mm][Ee]\}/) {
+				my @values = ($name);
+				if($Names->{$name}) {
+					push @values,@{$Names->{$name}};
+				}
+				$id = name_exp($id,@values);
+			}
             if($host =~ m/^#/) {
                 push @r,[$name,$id,$host];
                 next;
@@ -181,11 +226,11 @@ sub action_DOWNLOAD {
         app_error("Can't access $name/$hostname!\n");
         return undef;
     }
-    my $Names = MyPlace::Config->new();
-    $Names->read_plainfile($TASK_DATABASE);
-    $Names->propset(scalar(localtime),$name,$id,$host,"last");
+    my $Database = MyPlace::Config->new();
+    $Database->read_plainfile($TASK_DATABASE);
+    $Database->propset(scalar(localtime),$name,$id,$host,"last");
     app_message("Saving $TASK_DATABASE...\n");
-    $Names->write_plainfile($TASK_DATABASE);
+    $Database->write_plainfile($TASK_DATABASE);
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
     if($host =~ /google|baidu|yahoo|sogua/) {
@@ -228,11 +273,11 @@ sub action_FEED {
         app_error("Can't access $name/$hostname!\n");
         return undef;
     }
-    my $Names = MyPlace::Config->new();
-    $Names->read_plainfile($TASK_DATABASE);
-    $Names->propset(scalar(localtime),$name,$id,$host,"last");
+    #my $Database = MyPlace::Config->new();
+    #$Database->read_plainfile($TASK_DATABASE);
+    $Database->propset(scalar(localtime),$name,$id,$host,"last");
     app_prompt('Saving database',$TASK_DATABASE,"\n");
-    $Names->write_plainfile($TASK_DATABASE);
+    $Database->write_plainfile($TASK_DATABASE);
     app_prompt('Processing task',"$name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
     if($host =~ /google|baidu|yahoo|sogua/) {
@@ -322,13 +367,13 @@ if(@ARGV) {
 	my @targets;
 	foreach(@queries) {
 		next unless($_);
-		my @r =  $Names->query($_);
+		my @r =  $Database->query($_);
 		if((!@r) and $_ !~ m/\/,/) {
 			@r = [[split(/\s*,\s*/,$_)],{newly=>{}},'newly'];	
 		}
 		push @targets,@r if(@r);
 	}
-    my @records = $Names->get_records(@targets);
+    my @records = $Database->get_records(@targets);
     my @tasks = convert_records($Hosts,\@records);
     if($action eq 'DOWNLOAD') {
         &init;

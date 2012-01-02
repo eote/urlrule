@@ -115,50 +115,48 @@ sub autoApply {
 	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
 	my ($status,$result) = $self->applyRule($rule,$res);
 	my @responses;
-	#@{$res}{qw/title url level/});
-	if(!$status) {
-		app_error($self->{msghd},$result,"\n");
-		return $status;
-	}
-	my $cwd = getcwd;
-	if(!$result->{success}) {
-		app_error($self->{msghd},"Rule not working for $res->{url}\n");
-		next;
-	}
 	if($self->{callback_called}) {
 		@responses = @{$self->{response}};
 	}
-	push @responses,$result;
+	elsif(!$status) {
+		app_error($self->{msghd},$result,"\n");
+		return $status;
+	}
+	elsif(!$result->{success}) {
+		app_error($self->{msghd},"Rule not working for $res->{url}\n");
+		next;
+	}
+	push @responses,$result if($status);
 	if($self->{request}->{createdir} && $res->{title}) {
 		$self->makedir($res->{title}) or die("$!\n");
-		$self->changedir($res->{title}) or die("$!\n");
+		$self->changedir($res->{title},'autoApply request') or die("$!\n");
 	}
+	my $cwd = getcwd;
 	foreach my $response (@responses) {
-		my $cwd = getcwd;
 		$self->process($response,$rule);
 		if($response->{next_level}) {
 			my %next = %{$response->{next_level}};
 			app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n") if($next{count});
-			my $idx = 0;
 			$self->{msghd} = "[Level $next{level}] ";
 			if($response->{base} and $self->{request}->{buildurl}) {
 				map {$_ = URI->new_abs($_,$response->{base})->as_string} @{$next{data}};
 			}
+			my $cwd = getcwd;
+			my $idx = 0;
 			foreach (@{$next{data}}) {
-				my $cwd = getcwd;
 				$self->processNextLevel({
 					url=>$_,
 					level=>$next{level},
 					title=>	($next{name} ? $next{name}->[$idx] : undef),
 					action=>$next{action}
 				});
+				$idx++;
 				chdir($cwd);
 			}
 		}
 		chdir($cwd);
 		$self->{msghd} = "[Level $rule->{level}] ";
 	}
-	chdir($cwd);
 	return 1;
 }
 sub processNextLevel {
@@ -175,7 +173,9 @@ sub processNextLevel {
 sub changedir {
 	my $self = shift;
 	my $dir = shift;
-	app_prompt($self->{msghd} . 'Changes directory',$dir,"\n");
+	my $msg = shift(@_) || "";
+	$msg = "($msg)" if($msg);
+	app_prompt($self->{msghd} . 'Changes directory',$dir,"$msg\n");
 	chdir($dir);
 }
 sub makedir {
@@ -213,7 +213,7 @@ sub process {
 		my $wd = $response->{work_dir} || $response->{title};
 		if($wd) {
 			$self->makedir($wd) or die("$!\n");
-			$self->changedir($wd) or die("$!\n");
+			$self->changedir($wd,'process') or die("$!\n");
 		}
 	}
 	app_prompt($self->{msghd},"Get " . $response->{count} . " items\n");
