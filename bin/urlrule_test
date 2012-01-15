@@ -28,28 +28,33 @@ else
     require MyPlace::Usage;
     MyPlace::Usage::PrintHelp();
 }
-use MyPlace::URLRule;
+use MyPlace::URLRule::OO;
 use Data::Dumper;
 
 
-sub test
-{
-    my ($status1,$rule,$result) = urlrule_process_args(@_);
-    print STDERR Data::Dumper->Dump([$rule,$result],[qw/*rule *result/]);
-    if($status1) 
-    {
-        my($pass_count,@pass_args) = urlrule_get_passdown($rule,$result);
-        if($pass_count and $pass_count>0)
-        {
-            foreach(@pass_args)
-            {
-                &test(@{$_});
-            }
-        }
-    }
-}
+my $RH = new MyPlace::URLRule::OO(
+		createdir=>0,
+		buildurl=>1,
+		callback_process=>\&Dump,
+	);
 
-&test(undef,@ARGV);
+sub Dump {
+	my $RH = shift;
+	my $response = shift;
+	my %Response = (
+		data=>$response->{data},
+		pass_data=>$response->{pass_data},
+		pass_name=>$response->{pass_name},
+		title=>$response->{title},
+		base=>$response->{base},
+		work_dir=>$response->{work_dir},
+		level=>$response->{level},
+		count=>$response->{count},
+		pass_count=>$response->{pass_count},
+	);
+	print STDERR Data::Dumper->Dump([\%Response],['*Response']);
+}
+$RH->autoApply(@ARGV);
 
 __END__
 

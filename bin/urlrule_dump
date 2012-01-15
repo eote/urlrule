@@ -27,7 +27,7 @@ if($status and ref $result) {
         exit 0;
 }
 else {
-    print STDERR ("Error: result contians nothing\n");
+    print STDERR ("Error: $result\n");
     exit 1;
 }
 

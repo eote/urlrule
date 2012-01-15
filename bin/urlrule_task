@@ -5,10 +5,13 @@ use lib $ENV{XR_PERL_MODULE_DIR};
 use MyPlace::URLRule::OO;
 use MyPlace::ReEnterable;
 use MyPlace::Script::Message;
-use Cwd;
+use MyPlace::UniqueList;
+use File::Spec;
 use Getopt::Long;
 use strict;
 use warnings;
+#binmode STDERR,'utf8';
+#binmode STDOUT,'utf8';
 
 #use MyPlace::URLRule::HostMap qw/%HOST_MAP get_task valid_hostname add_host get_hosts/;
 
@@ -30,13 +33,36 @@ my %OPTS;
 
 my $phnd;
 my $TASK_LOGGING    = 1;
-my $TASK_DATABASE   = "DATABASE.URL";
-my $HOST_DATABASE = "HOSTS.URL";
+my $TASK_DATABASE_NAME   = "DATABASE.URL";
+my $HOST_DATABASE_NAME = "HOSTS.URL";
 my $NAMES_DATABASE = "NAMES.db";
-#$TASK_DATABASE = $URLRULE_DIRECTORY . '/database/' . $TASK_DATABASE unless(-f $TASK_DATABASE);
-#$HOST_DATABASE = $URLRULE_DIRECTORY . '/database/' . $HOST_DATABASE unless(-f $HOST_DATABASE);
-my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f -r \'#URLRULE_BASE#\'';
-my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f -r \'#URLRULE_BASE#\'';
+my @CONFIG_INC = (
+	File::Spec->curdir,
+	File::Spec->catdir($ENV{HOME} ,'.u_task'),
+	File::Spec->catdir($ENV{HOME}),
+);
+my $TASK_DATABASE = File::Spec->catfile($CONFIG_INC[0],$TASK_DATABASE_NAME);
+my $HOST_DATABASE = File::Spec->catfile($CONFIG_INC[0],$HOST_DATABASE_NAME);
+if(!-f $TASK_DATABASE) {
+	foreach(@CONFIG_INC) {
+		my $file = File::Spec->catfile($_,$TASK_DATABASE_NAME);
+		if(-f $file) {
+			$TASK_DATABASE = $file;
+			last;
+		}
+	}
+}
+if(!-f $HOST_DATABASE) {
+	foreach(@CONFIG_INC) {
+		my $file = File::Spec->catfile($_,$HOST_DATABASE_NAME);
+		if(-f $file) {
+			$HOST_DATABASE = $file;
+			last;
+		}
+	}
+}
+my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f';#-r \'#URLRULE_HOST#\'';
+my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f';# -r \'#URLRULE_BASE#\'';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
 use MyPlace::Config;
@@ -45,6 +71,44 @@ $Database->read_plainfile($TASK_DATABASE);
 use MyPlace::HashArray;
 my $Names = MyPlace::HashArray->read($NAMES_DATABASE);
 #print Data::Dumper->Dump([$Names],['*Names']),"\n";
+my $URLRULE = new MyPlace::URLRule::OO(
+	buildurl=>1,
+	createdir=>1,
+	callback_nextlevel=>\&process_passdown_task,
+	process_callback_applyrule=>1,
+	callback_action=>\&callback_do_action,
+);
+
+my %URLHIST;
+
+
+sub callback_do_action {
+	my ($urlrule,$data,@args) = @_;
+	my @passing;
+	my $topdir = $urlrule->{'UTASK'}->{topdir};
+#	print STDERR "Callback do_action" . ($topdir ? " [$topdir]" : "") . "\n";
+	if((!$topdir) || (!$URLHIST{$topdir})) {
+		return $urlrule->do_action($data,@args);
+	}
+	my $HIST = $URLHIST{$topdir};
+	my $dup = 0;
+	foreach(@{$data}) {
+		if($HIST->add($_)) {
+			push @passing,$_;
+		}
+		else {
+			$dup++;
+		}
+	}
+	if($dup) {
+		app_prompt("[URL History]", with_color(
+			"^(RED)$dup^(YELLOW)" . ($dup > 1 ? " items" : " item") . " ignored.^(RESET)"
+			),"\n");
+	}
+	my @r = $urlrule->do_action(\@passing,@args);
+	$HIST->save;
+	return @r;
+}
 
 sub change_directory {
     my $path = shift;
@@ -70,11 +134,6 @@ sub change_directory {
     return 1;
 }
 
-my $URLRULE = new MyPlace::URLRule::OO(
-	buildurl=>1,
-	createdir=>1,
-	callback_nextlevel=>\&process_passdown_task
-);
 sub process_passdown_task {
 	my $res = shift;
 	$phnd->push(getcwd,'load_rule',@{$res}{qw/title url level action/});
@@ -116,7 +175,7 @@ sub name_exp {
 		map {$_ = "$1$_$1";} @values;
 		$exp =~ s/(.)\{name\}\1/\{name\}/g;
 	}
-	my $rpl = join(" ",@values);
+	my $rpl = join(" OR ",@values);
 	$exp =~s/\{name\}/$rpl/g;
 	return $exp;
 }
@@ -150,12 +209,16 @@ sub convert_records {
                 my ($level) = $Hosts->propget($hostname,$url);
                 my ($id_name,@id_text) = split(/\s*:\s*/,$id);
                 $url =~ s/###(?:ID|NAME])###/$id_name/g;
+                $url =~ s/\{(?:ID|NAME])\}/$id_name/g;
                 my $index = 0;
                 foreach(@id_text) {
                     $index++;
                     $url =~ s/###TEXT$index###/$_/g;
+                    $url =~ s/\{TEXT$index\}/$_/g;
                 }
-                push @r,[$name,$id,$host,$url,$level];
+				$url =~ s/###TEXT\d*###//g;
+				$url =~ s/\{TEXT\d*\}//g;
+                push @r,[$name,$id,$host,$url,$level,$path];
             }
             else {
                 app_error("HOST $host isn't valid, or not defined in :\n\t$HOST_DATABASE\n");
@@ -196,7 +259,7 @@ sub action_DUMP {
 }
 sub action_DOWNLOAD {
     my $task = shift;
-    my($name,$id,$host,$url,$level) = @{$task};
+    my($name,$id,$host,$url,$level,$path) = @{$task};
     my $hostname;
     if($host =~ /^[^\|]+\|(.+)$/)
     {
@@ -210,6 +273,17 @@ sub action_DOWNLOAD {
     {
         $hostname = $host;
     }
+	#my $prop_urlhist = undef;
+	if($path) {
+	    my $Database = MyPlace::Config->new();
+		$Database->read_plainfile($TASK_DATABASE);
+	#	$prop_urlhist = $Database->propget(@{$path}[0,1,2],"urlhist");
+		use POSIX qw/strftime/;
+		my $now = strftime "%Y-%m-%d %H:%M:%S",localtime;
+	    $Database->propset($now,$path->[0],$path->[1],$path->[2],"last");
+		app_message("Saving $TASK_DATABASE...\n");
+	    $Database->write_plainfile($TASK_DATABASE);
+	}
     my $cwd = getcwd();
     if(! -d "$name")
     {
@@ -226,19 +300,29 @@ sub action_DOWNLOAD {
         app_error("Can't access $name/$hostname!\n");
         return undef;
     }
-    my $Database = MyPlace::Config->new();
-    $Database->read_plainfile($TASK_DATABASE);
-    $Database->propset(scalar(localtime),$name,$id,$host,"last");
-    app_message("Saving $TASK_DATABASE...\n");
-    $Database->write_plainfile($TASK_DATABASE);
+	my $topdir = File::Spec->catdir($cwd,$name,$hostname);
+	$URLRULE->{'UTASK'}->{topdir} = "$topdir";
+	$URLHIST{$topdir} = new MyPlace::UniqueList(
+		file=>File::Spec->catfile($topdir,'URLS.txt'),
+		itemName=>'URL',
+		itemsName=>'URLs',
+		autoAdd=>1,
+		message=>1
+	) unless($URLHIST{$topdir});
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
-    if($host =~ /google|baidu|yahoo|sogua/) {
-        load_rule("$name/$hostname",$url,$level,$U_DOWNLOADER);
+	my $dl = $S_DOWNLOADER . ' -r \'#URLRULE_BASE#\'';
+    if($host =~ /google|baidu|yahoo|sogua|search$|searching$/) {
+		$dl = $S_DOWNLOADER;
     }
-    else {
-        load_rule("$name/$hostname",$url,$level,$S_DOWNLOADER);
-    }
+#	elsif($host =~ /href\.img|\|galleries$/) {
+#		load_urlhist($topdir);
+#	}
+#	elsif($prop_urlhist) {
+#		load_urlhist($topdir);
+#	}
+    load_rule("$name/$hostname",$url,$level,$dl);
+#	save_urlhist("$name/$hostname");
     return 1;
 }
 sub action_FEED {
@@ -274,10 +358,10 @@ sub action_FEED {
         return undef;
     }
     #my $Database = MyPlace::Config->new();
-    #$Database->read_plainfile($TASK_DATABASE);
+    $Database->read_plainfile($TASK_DATABASE . "processed");
     $Database->propset(scalar(localtime),$name,$id,$host,"last");
     app_prompt('Saving database',$TASK_DATABASE,"\n");
-    $Database->write_plainfile($TASK_DATABASE);
+    $Database->write_plainfile($TASK_DATABASE . "processed");
     app_prompt('Processing task',"$name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
     if($host =~ /google|baidu|yahoo|sogua/) {
@@ -363,13 +447,21 @@ if(@ARGV) {
 			push @queries,$_ if($_);
 		}
 	}
-	@queries = ('/.*/') unless(@queries);
+	@queries = ('/.?/') unless(@queries);
 	my @targets;
 	foreach(@queries) {
 		next unless($_);
+		my @q = split(/\s*,\s*/,$_);
+		foreach(@q) {
+			$_ = '/.?/' unless($_);
+		}
+		$_ = join(",",@q);
 		my @r =  $Database->query($_);
+		if(!@r) {
+			next unless(m/^[^,]+,[^,]+,[^,]+$/);
+		}
 		if((!@r) and $_ !~ m/\/,/) {
-			@r = [[split(/\s*,\s*/,$_)],{newly=>{}},'newly'];	
+			@r = ([split(/\s*,\s*/,$_),'newly']);
 		}
 		push @targets,@r if(@r);
 	}
@@ -404,7 +496,7 @@ unless($phnd->length) {
 my $idx = 0;
 while(my $tasks = $phnd->length) {
 	$idx ++;
-	app_prompt("[" . localtime . "]",color('RED'),$idx,color('CYAN')," tasks fininshed, ",color('RED'),$tasks,color('CYAN')," remained.\n");
+	app_prompt("[" . localtime . "]",color('RED'),$idx,color('CYAN')," tasks fininshed, ",color('RED'),$tasks,color('CYAN')," remained.\n\n");
     $phnd->run();
 		 #app_ok("[$idx/$tasks]Finished : ",scalar(localtime),"\n");
 }

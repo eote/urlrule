@@ -192,22 +192,20 @@ sub apply_rule {
     unless(-f $source) {
 		return undef,"File not found: $source";
     }
-	my $tempname = rand(10);
-	$tempname =~ s/\./::/g;
-	$tempname = "MyPlace::URLRule::Eval::$tempname";
-eval<<"CODE";
-	package $tempname;
-	no warnings;
-	no strict qw/subs/;
-    do \$source;
-CODE
+	
+	no warnings 'redefine';
+	package MyPlace::URLRule::Rule;
+	do $source;
+
+	foreach(qw(@URLRULE_LIB $URLRULE_DIRECTORY &parse_rule &get_domain &get_rule_dir set_callback callback_apply_rule)) {
+		${MyPlace::URLRule::Rule::}{"$_"} = ${MyPlace::URLRule::}{"$_"};
+	}
+	
+	use warnings;
     package MyPlace::URLRule;
-    my @result = eval $tempname . '::apply_rule($url,$rule);';
-    if($@) {
-        return undef,"Couldn't parse ",'RED',$source,"\n$@";
-    }
+	use warnings;
+    my @result = MyPlace::URLRule::Rule::apply_rule($url,$rule);
     return undef,'Nothing to do' unless(@result);
-#	return undef,'Nothing to do'  unless($result[0]);
     my %result = @result;
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);
@@ -222,7 +220,7 @@ sub urlrule_quick_parse {
     die("Error 'url=>undef'\n") unless($url);
     my $title;
 #    my %rule = %{$args{rule}};
-    my ($title_exp,$title_map,$data_exp,$data_map,$pass_exp,$pass_map,$pass_name_exp,$pass_name_map,$pages_exp,$pages_map,$pages_pre,$pages_suf,$pages_start,$charset) = @args{qw/
+    my ($title_exp,$title_map,$data_exp,$data_map,$pass_exp,$pass_map,$pass_name_exp,$pass_name_map,$pages_exp,$pages_map,$pages_pre,$pages_suf,$pages_start,$pages_margin,$charset) = @args{qw/
         title_exp
         title_map
         data_exp
@@ -236,6 +234,7 @@ sub urlrule_quick_parse {
         pages_pre
         pages_suf
         pages_start
+		pages_margin
         charset
     /};
     my $http = MyPlace::Curl->new();
@@ -274,20 +273,22 @@ sub urlrule_quick_parse {
         }
     }
     elsif($pages_exp) {
+		$pages_margin = 1 unless(defined $pages_margin);
         $pages_start = 2 unless(defined $pages_start);
-        my $last = $pages_start - 1; 
+        my $last = 0;
         my $pre = "";
         my $suf = "";
         while($html =~ m/$pages_exp/g) {
-            if(eval($pages_map) > $last) {
-                    $last = eval $pages_map;
+			my $this = eval $pages_map;
+            if($this > $last) {
+                    $last = $this;
                     $pre = eval $pages_pre  if($pages_pre);
                     $suf = eval $pages_suf if($pages_suf);
             }
         }
-        if($last >= $pages_start) {
-            @pass_data = map "$pre$_$suf",($pages_start .. $last);
-        }
+		for(my $i = $pages_start;$i<=$last;$i+=$pages_margin) {
+			push @pass_data,"$pre$i$suf";
+		}
         push @pass_data,$url;
     }
 #	use Data::Dumper;die(Dumper(\%h_pass));

@@ -18,3 +18,10 @@ push @ARGV,"batchget -c -M 600 -f -n '$rule->{domain}\[$rule->{level}\]' -r '#UR
 my $urlrule_action = `which urlrule_action`;
 chomp($urlrule_action);
 eval `cat "$urlrule_action"`;
+if($@) {
+	print STDERR "$@\n";
+	exit 1;
+}
+else {
+	exit 0;
+}
