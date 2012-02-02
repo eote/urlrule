@@ -120,6 +120,7 @@ sub to_response {
 			}
 			else {
 				foreach(@{$response{pass_data}}) {
+					next if(ref $_);
 					$_ = {url=>$_};
 				}
 			}
@@ -163,7 +164,7 @@ sub autoApply {
 		}
 		$self->changedir($res->{title},'autoApply request') or die("$!\n");
 	}
-	app_prompt($self->{msghd} . 'Retriving' , $rule->{url},"...\n");
+	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
 	my ($status,$result) = $self->applyRule($rule,$res);
 	my @responses;
 	if($self->{callback_called}) {
