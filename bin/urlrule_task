@@ -28,6 +28,8 @@ my @OPTIONS = qw/
 		download|d
 		echo|e
 		dump
+		no-urlhist|no-uh
+		overwrite|ow
 		/;
 my %OPTS;
 
@@ -61,25 +63,57 @@ if(!-f $HOST_DATABASE) {
 		}
 	}
 }
-my $U_DOWNLOADER = 'batchget --maxtime 600 -U -c -m 2 -f';#-r \'#URLRULE_HOST#\'';
-my $S_DOWNLOADER = 'batchget --maxtime 600 -c -m 2 -f';# -r \'#URLRULE_BASE#\'';
+my $U_DOWNLOADER = 'batchget --maxtime 600 -U --nc -m 2 -f';#-r \'#URLRULE_HOST#\'';
+my $S_DOWNLOADER = 'batchget --maxtime 600 --nc -m 2 -f';# -r \'#URLRULE_BASE#\'';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
-use MyPlace::Config;
-my $Database = MyPlace::Config->new();
-$Database->read_plainfile($TASK_DATABASE);
-use MyPlace::HashArray;
-my $Names = MyPlace::HashArray->read($NAMES_DATABASE);
-#print Data::Dumper->Dump([$Names],['*Names']),"\n";
-my $URLRULE = new MyPlace::URLRule::OO(
-	buildurl=>1,
-	createdir=>1,
-	callback_nextlevel=>\&process_passdown_task,
-	process_callback_applyrule=>1,
-	callback_action=>\&callback_do_action,
-);
+GetOptions(\%OPTS,@OPTIONS);
+if($OPTS{'help'}) {
+	require Pod::Usage;
+	Pod::Usage::pod2usage('-exitval'=>1,'-verbose'=>1);
+	exit 1;
+}
+elsif($OPTS{'manual'}) {
+	require Pod::Usage;
+	Pod::Usage::pod2usage('-exitval'=>1,'-verbose'=>3);
+	exit 2;
+}
 
+if($OPTS{'force'}) {
+	$OPTS{'overwrite'} = 1;
+	$OPTS{'no-urlhist'} = 1;
+}
+
+if($OPTS{'overwrite'}) {
+	$U_DOWNLOADER =~ s/ --nc / --dl-force /;
+	$S_DOWNLOADER =~ s/ --nc / --dl-force /;
+}
+
+use MyPlace::Config;
+use MyPlace::HashArray;
+my $Database;
+my $Names;
+my $URLRULE;
 my %URLHIST;
+
+sub init_database {
+	$Database = MyPlace::Config->new();
+	$Database->read_plainfile($TASK_DATABASE);
+	$Names = MyPlace::HashArray->read($NAMES_DATABASE);
+#print Data::Dumper->Dump([$Names],['*Names']),"\n";
+	$URLRULE = new MyPlace::URLRule::OO(
+		buildurl=>1,
+		createdir=>1,
+		callback_nextlevel=>\&process_passdown_task,
+		process_callback_applyrule=>1,
+		callback_action=>\&callback_do_action,
+	);
+	return 1;
+}
+
+sub init_task {
+    $phnd= MyPlace::ReEnterable->new('main');
+}
 
 
 sub callback_do_action {
@@ -87,7 +121,7 @@ sub callback_do_action {
 	my @passing;
 	my $topdir = $urlrule->{'UTASK'}->{topdir};
 #	print STDERR "Callback do_action" . ($topdir ? " [$topdir]" : "") . "\n";
-	if((!$topdir) || (!$URLHIST{$topdir})) {
+	if(($OPTS{'no-urlhist'}) || (!$topdir) || (!$URLHIST{$topdir})) {
 		return $urlrule->do_action($data,@args);
 	}
 	my $HIST = $URLHIST{$topdir};
@@ -308,7 +342,7 @@ sub action_DOWNLOAD {
 		itemsName=>'URLs',
 		autoAdd=>1,
 		message=>1
-	) unless($URLHIST{$topdir});
+	) unless($URLHIST{$topdir} || $OPTS{'no-urlhist'});
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
 	my $dl = $S_DOWNLOADER . ' -r \'#URLRULE_BASE#\'';
@@ -393,9 +427,6 @@ sub sig_killed {
 
 
 $SIG{INT} = \&sig_killed;
-sub init {
-        $phnd= MyPlace::ReEnterable->new('main');
-};
 
 sub clean_up {
 }
@@ -408,19 +439,11 @@ sub ignore_this {
 		return undef;
 	}
 }
-GetOptions(\%OPTS,@OPTIONS);
-if($OPTS{'help'}) {
-	require Pod::Usage;
-	pod2usage('-exitval'=>1,'-verbose'=>1);
-	exit 1;
-}
-elsif($OPTS{'manual'}) {
-	require Pod::Usage;
-	pod2usage('-exitval'=>2,'-verbose'=>2);
-	exit 2;
-}
 
 my $action = $OPTS{'action'};
+if((!$action)) {
+	$action = $OPTS{'download'} ? 'DOWNLOAD' : $OPTS{'echo'} ? 'ECHO' : $OPTS{'dump'} ? 'DUMP' : undef;
+}
 
 if(@ARGV) {
     die("No DATA_FILE(" . $TASK_DATABASE . ") found\n") unless(-r $TASK_DATABASE);
@@ -449,6 +472,7 @@ if(@ARGV) {
 	}
 	@queries = ('/.?/') unless(@queries);
 	my @targets;
+	&init_database;
 	foreach(@queries) {
 		next unless($_);
 		my @q = split(/\s*,\s*/,$_);
@@ -468,7 +492,7 @@ if(@ARGV) {
     my @records = $Database->get_records(@targets);
     my @tasks = convert_records($Hosts,\@records);
     if($action eq 'DOWNLOAD') {
-        &init;
+        &init_task;
 		foreach(@queries) {
 			&log($action," - ",$_);
 		}
@@ -484,7 +508,8 @@ if(@ARGV) {
     }
 }
 else {
-    &init;
+	&init_database;
+    &init_task;
     $phnd->loadFromFile(TASK_FILE_RESUME);
 	$action = 'DOWNLOAD';
 }
@@ -503,3 +528,75 @@ while(my $tasks = $phnd->length) {
 app_message "All tasks completed.\n";
 unlink TASK_FILE_RESUME if(-f TASK_FILE_RESUME);
 exit 0;
+
+__END__
+
+=pod
+
+=head1  NAME
+
+urlrule_task - DOWNLOAD sites according to urlrule
+
+=head1  SYNOPSIS
+
+urlrule_task [options] QUERIES...
+
+=head1  OPTIONS
+
+=over 12
+
+=item B<--action>,B<-a>
+
+Specify action
+
+=item B<--download>,B<-d>
+
+Same as B<--action DOWNLOAD>
+
+=item B<--echo>,B<-e>
+
+Same as B<--action ECHO>
+
+=item B<--dump>
+
+Same as B<--action DUMP>
+
+=item B<--overwrite>,B<--ow>
+
+Switch downloader to overwriting mode.
+
+=item B<--no-urlhist>,B<--no-uh>
+
+Disabled URLs history tracking.
+
+=item B<--force>,B<-f>
+
+Same as B<--no-urlhist> B<--overwrite>
+
+=item B<-h>,B<--help>
+
+Print a brief help message and exits.
+
+=item B<--manual>,B<--man>
+
+View application manual
+
+=back
+
+=head1  DESCRIPTION
+
+urlrule database downloader
+
+=head1  CHANGELOG
+
+    2012-01-18 02:34  xiaoranzzz  <xiaoranzzz@myplace.hell>
+        
+        * add manual
+
+=head1  AUTHOR
+
+xiaoranzzz <xiaoranzzz@myplace.hell>
+
+=cut
+
+#       vim:filetype=perl
