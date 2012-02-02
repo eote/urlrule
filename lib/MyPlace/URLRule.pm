@@ -3,10 +3,9 @@ package MyPlace::URLRule;
 use URI;
 use URI::Escape;
 use MyPlace::Script::Message;
-#use Term::ANSIColor;
-use MyPlace::Curl;
+use MyPlace::URLRule::Utils qw/&get_url &parse_pages/;
+use Cwd qw/abs_path getcwd/;
 use strict;
-use Cwd;
 
 BEGIN {
     use Exporter ();
@@ -26,46 +25,6 @@ our @URLRULE_LIB = (getcwd . "/urlrule",$USER_URLRULE_DIRECTORY,$URLRULE_DIRECTO
 
 unshift @INC,@URLRULE_LIB;
 my %CALLBACK;
-sub unescape_text {
-    my %ESCAPE_MAP = (
-        "&lt;","<" ,"&gt;",">",
-        "&amp;","&" ,"&quot;","\"",
-        "&agrave;","à" ,"&Agrave;","À",
-        "&acirc;","â" ,"&auml;","ä",
-        "&Auml;","Ä" ,"&Acirc;","Â",
-        "&aring;","å" ,"&Aring;","Å",
-        "&aelig;","æ" ,"&AElig;","Æ" ,
-        "&ccedil;","ç" ,"&Ccedil;","Ç",
-        "&eacute;","é" ,"&Eacute;","É" ,
-        "&egrave;","è" ,"&Egrave;","È",
-        "&ecirc;","ê" ,"&Ecirc;","Ê",
-        "&euml;","ë" ,"&Euml;","Ë",
-        "&iuml;","ï" ,"&Iuml;","Ï",
-        "&ocirc;","ô" ,"&Ocirc;","Ô",
-        "&ouml;","ö" ,"&Ouml;","Ö",
-        "&oslash;","ø" ,"&Oslash;","Ø",
-        "&szlig;","ß" ,"&ugrave;","ù",
-        "&Ugrave;","Ù" ,"&ucirc;","û",
-        "&Ucirc;","Û" ,"&uuml;","ü",
-        "&Uuml;","Ü" ,"&nbsp;"," ",
-        "&copy;","\x{00a9}",
-        "&reg;","\x{00ae}",
-        "&euro;","\x{20a0}",
-    );
-    my $text = shift;
-    return unless($text);
-    foreach (keys %ESCAPE_MAP) {
-        $text =~ s/$_/$ESCAPE_MAP{$_}/g;
-    }
-    $text =~ s/&#(\d+);/chr($1)/eg;
-    $text = uri_unescape($text);
-#    $text =~ s/[_-]+/ /g;
-    $text =~ s/[\:]+/, /g;
-    $text =~ s/[\\\<\>"\^\&\*\?]+//g;
-    $text =~ s/\s{2,}/ /g;
-    $text =~ s/(?:^\s+|\s+$)//;
-    return $text;
-}
 
 sub get_rule_dir() {
     return $URLRULE_DIRECTORY;
@@ -95,7 +54,6 @@ sub parse_rule {
         $r{"local"} = $1;
         $r{url} =~ s/^local:/file_/;
         if($r{url} =~ /^file_[^\/]+\/(.*)$/) {
-            use Cwd 'abs_path';
             $r{"local_path"} = abs_path($1);
         }
     }
@@ -195,7 +153,11 @@ sub apply_rule {
 	
 	no warnings 'redefine';
 	package MyPlace::URLRule::Rule;
+	no warnings 'redefine';
 	do $source;
+
+	print STDERR "$@\n" if($@);
+	$@ = undef;
 
 	foreach(qw(@URLRULE_LIB $URLRULE_DIRECTORY &parse_rule &get_domain &get_rule_dir set_callback callback_apply_rule)) {
 		${MyPlace::URLRule::Rule::}{"$_"} = ${MyPlace::URLRule::}{"$_"};
@@ -204,9 +166,9 @@ sub apply_rule {
 	use warnings;
     package MyPlace::URLRule;
 	use warnings;
-    my @result = MyPlace::URLRule::Rule::apply_rule($url,$rule);
-    return undef,'Nothing to do' unless(@result);
-    my %result = @result;
+    my ($status,@result) = MyPlace::URLRule::Rule::apply_rule($url,$rule);
+    return undef,'Nothing to do' unless($status);
+    my %result = ($status,@result);
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);
     }
@@ -216,29 +178,23 @@ sub apply_rule {
 
 sub urlrule_quick_parse {
     my %args = @_;
-    my $url = $args{url};
+    my $url = $args{url};;
+
     die("Error 'url=>undef'\n") unless($url);
     my $title;
 #    my %rule = %{$args{rule}};
-    my ($title_exp,$title_map,$data_exp,$data_map,$pass_exp,$pass_map,$pass_name_exp,$pass_name_map,$pages_exp,$pages_map,$pages_pre,$pages_suf,$pages_start,$pages_margin,$charset) = @args{qw/
-        title_exp
-        title_map
-        data_exp
-        data_map
-        pass_exp
-        pass_map
-        pass_name_exp
-        pass_name_map
-        pages_exp
-        pages_map
-        pages_pre
-        pages_suf
-        pages_start
-		pages_margin
+    my ($title_exp,$title_map,
+		$data_exp,$data_map,
+		$pass_exp,$pass_map,$pass_name_exp,$pass_name_map,
+		$pages_exp,$pages_map,$pages_pre,$pages_suf,$pages_start,$pages_margin,
+		$charset) = @args{qw/
+        title_exp title_map
+        data_exp data_map
+		pass_exp pass_map pass_name_exp pass_name_map 
+        pages_exp pages_map pages_pre pages_suf pages_start pages_margin
         charset
     /};
-    my $http = MyPlace::Curl->new();
-    my (undef,$html) = $http->get($url,(defined $charset ? "charset:$charset" : undef),'--referer',$url);
+    my $html = get_url($url,'-v',(defined $charset ? "charset:$charset" : undef),'referer'=>$url);
     my @data;
     my @pass_data;
     my @pass_name;
@@ -273,23 +229,22 @@ sub urlrule_quick_parse {
         }
     }
     elsif($pages_exp) {
-		$pages_margin = 1 unless(defined $pages_margin);
-        $pages_start = 2 unless(defined $pages_start);
-        my $last = 0;
-        my $pre = "";
-        my $suf = "";
-        while($html =~ m/$pages_exp/g) {
-			my $this = eval $pages_map;
-            if($this > $last) {
-                    $last = $this;
-                    $pre = eval $pages_pre  if($pages_pre);
-                    $suf = eval $pages_suf if($pages_suf);
-            }
-        }
-		for(my $i = $pages_start;$i<=$last;$i+=$pages_margin) {
-			push @pass_data,"$pre$i$suf";
+		my $pages =  &parse_pages(
+				source=>$url,
+				data=>$html,
+				exp=>$pages_exp,
+				map=>$pages_map,
+				prefix=>$pages_pre,
+				suffix=>$pages_suf,
+				start=>$pages_start,
+				margin=>$pages_margin,
+		);
+		if(!@pass_data) {
+			@pass_data = @{$pages};
 		}
-        push @pass_data,$url;
+		else {
+			push @pass_data,@{$pages};
+		}
     }
 #	use Data::Dumper;die(Dumper(\%h_pass));
 #    @data = delete_dup(@data) if(@data);
