@@ -1,5 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
+use MyPlace::Time qw/now/;
 my $action = uc($ARGV[0]) if(@ARGV);
 if($action and $action =~ /^(?:DOWNLOAD|DUMP|ECHO)$/) {
         shift @ARGV;
@@ -9,13 +10,13 @@ if($action and $action =~ /^(?:DOWNLOAD|DUMP|ECHO)$/) {
 
 my $TASK_DATABASE   = "DATABASE.URL";
 open FO,">>","urlrule_database.log";
-print FO scalar(localtime),": urlrule_database ",(map "\"$_\" ",@ARGV),"\n";
+print FO now,": urlrule_database ",(map "\"$_\" ",@ARGV),"\n";
 close FO;
 
 if(!$action) {
 }
 elsif($action =~ /^(?:ADD)$/) {
-        push @ARGV,'newly',unless ($ARGV[$#ARGV] eq 'newly' or $ARGV[$#ARGV] =~ m/^#/);
+#        push @ARGV,'newly',unless ($ARGV[$#ARGV] eq 'newly' or $ARGV[$#ARGV] =~ m/^#/);
 }
 elsif($action =~ /^(?:READD)$/) {
 	shift @ARGV;
