@@ -170,6 +170,7 @@ sub change_directory {
 
 sub process_passdown_task {
 	my $res = shift;
+    #print Data::Dumper->Dump([$res],['*res']);
 	$phnd->push(getcwd,'load_rule',@{$res}{qw/title url level action/});
 }
 sub load_rule {

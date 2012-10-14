@@ -90,7 +90,7 @@ sub to_response {
 			$response{title} = _safe_path($response{title});
 		}
 		unless(defined $response{level}) {
-			$response{level} = $rule->{level} if($response{samelevel});
+			$response{level} = $rule->{level} if($response{samelevel} || $response{same_level});
 		}
 		unless(defined $response{level}) {
 			$response{level} = $rule->{level}  - 1;
@@ -314,6 +314,7 @@ sub do_action {
     my $file=$response->{file};
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
 	my $action = $response->{pipeto} || $response->{action} || '';
+#    print Data::Dumper->Dump([$response],qw/*response/);
 	{
 		my $base = $response->{base} || $rule->{base} || $rule->{url};
 		$action =~ s/#URLRULE_BASE#/$base/g;
