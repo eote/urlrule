@@ -57,7 +57,7 @@ sub parse_rule {
             $r{"local_path"} = abs_path($1);
         }
     }
-    if($r{url} !~ /^http:\/\//i) {
+    if($r{url} !~ /^https?:\/\//i) {
         $r{url} = "http://" . $r{url};
     }
     $r{level} = shift;
@@ -204,15 +204,10 @@ sub urlrule_quick_parse {
     $pass_map = '$1' unless($pass_map);
 	my %LOCAL_VAR;
     $pass_name_map = $pass_name_exp unless($pass_name_map);
-    if($title_exp) {
-        $title_map = '$1' unless($title_map);
-        if($html =~ m/$title_exp/g) {
-            $title = eval $title_map;
-        }
-    }
     if($data_exp) {
-        while($html =~ m/$data_exp/g) {
+        while($html =~ m/$data_exp/og) {
 			my $r = eval $data_map;
+			#print STDERR "$data_exp => $data_map => $r\n";
 			next unless($r);
 			next if($h_data{$r});
             push @data,$r;
@@ -220,7 +215,7 @@ sub urlrule_quick_parse {
         }
     }
     if($pass_exp) {
-        while($html =~ m/$pass_exp/g) {
+        while($html =~ m/$pass_exp/og) {
             my $r = eval $pass_map;
 			next if($h_pass{$r});
             push @pass_data,$r;
@@ -245,6 +240,12 @@ sub urlrule_quick_parse {
 		else {
 			push @pass_data,@{$pages};
 		}
+    }
+    if($title_exp) {
+        $title_map = '$1' unless($title_map);
+        if($html =~ m/$title_exp/) {
+            $title = eval $title_map;
+        }
     }
 #	use Data::Dumper;die(Dumper(\%h_pass));
 #    @data = delete_dup(@data) if(@data);
