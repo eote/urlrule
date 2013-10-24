@@ -1,85 +1,181 @@
 #!/usr/bin/perl -w
 ###APPNAME:     urlrule_action
-###APPAUTHOR:   duel
-###APPDATE:	Mon Mar 24 06:25:31 2008
-###APPVER:	0.1
+###APPAUTHOR:   eotect@myplace
+###APPDATE:		Mon Mar 24 06:25:31 2008
+###APPVER:		1.0
 ###APPDESC:     apply rule for URL,and perform action	
 ###APPUSAGE:	urlrule_action URL [0-5] [action args...]
 ###APPEXAMPLE:	urlrule_action http://www.sina.com.cn 0 cat
 use strict;
 use utf8;
+binmode STDOUT,':utf8';
+binmode STDERR,':utf8';
+binmode STDIN,':utf8';
+our $VERSION = 'v0.1';
 
-use MyPlace::Script::Usage qw/help_required help_even_empty/;
-exit 0 if(help_required($0,@ARGV));
+#GLOBAL VARAIBLE
+my @OPTIONS;
+my %OPTS;
+my $CONF;
+my $RULE;
+my $PROGRAM;
+my $HISTORY;
+my $URLIGNORE;
+my $CWD;
+my $MSG;
 
+
+sub after_apply_rule {
+	my $status = shift;
+	my $result = shift;
+	my $rule = shift;
+	if($result && ref $result && !$result->{error}) {
+		if($rule->{level} <= $OPTS{test}) {
+			if($result->{pass_data} && @{$result->{pass_data}}) {
+				my $pcount = @{$result->{pass_data}};
+				my $ccount = 1;
+				if($ccount < $pcount) {
+					$MSG->warn("TEST MODE: trim PASS_DATA from <$pcount> down to <$ccount>\n");
+					$result->{pass_data} = [@{$result->{pass_data}}[0 .. $ccount-1]];
+				}
+			}
+		}
+	}
+	return $status,$result;
+}
+
+sub process_passdown {
+	my ($resp) = @_;
+    my $CWD = getcwd();
+	$PROGRAM->push($CWD,'load_rule',@{$resp}{qw/title url level action/});
+}
+
+sub load_rule {
+    my $CWD = getcwd();
+	my ($title,$url,$level,$action) = @_;
+	my $rep = $url . ($level ? "|$level" : "");
+	if($URLIGNORE->check($rep)) {
+		$MSG->message("Ignored: $rep\n");
+		return 1;
+	}
+	if(!$OPTS{"no-history"}) {
+		if($action && (!$level)) {
+			if($HISTORY->check($url)) {
+				$MSG->message("Ignored, URL'd been processed. $url\n");
+				return;
+			}
+		}	
+	}
+	my $status = $RULE->autoApply($url,$level,$action,$title);
+	if(!$OPTS{"no-history"}) {
+		if($status && (!$level)) {
+			$HISTORY->save($url);
+		}
+	}
+    chdir $CWD;
+}
+
+sub sig_killed {
+	if(!$OPTS{"no-history"}) {
+		$HISTORY->write();
+	}
+    $MSG->message("Saving remained tasks...\n");
+    if($PROGRAM->{lastStack}) {
+        $PROGRAM->unshift(@{$PROGRAM->{lastStack}});
+    }
+    chdir($CWD) if($CWD);
+    $PROGRAM->saveToFile();
+    $MSG->message($PROGRAM->length," tasks saved for resuming\n");
+    exit 1;
+}
+
+sub set_options {
+	my @ARGV = @_;
+	die(join("\t",@ARGV));
+	return @ARGV;
+}
+
+# INIT
 use MyPlace::Script::Message;
 use MyPlace::URLRule::OO;
-#Processor;
-use MyPlace::ReEnterable;
+use MyPlace::URLRule::Config;
 use Cwd qw/getcwd/;
+@OPTIONS = qw/
+	help|h|? 
+	manual|man
+    verbose|v:i
+	no-history|nh
+	test|t:i
+/;
+if(@ARGV) {
+	require Getopt::Long;
+	Getopt::Long::GetOptions(\%OPTS,@OPTIONS);
+}
+if($OPTS{'help'} or $OPTS{'manual'}) {
+	require Pod::Usage;
+	my $v = $OPTS{'help'} ? 1 : 2;
+	Pod::Usage::pod2usage(-exitval=>$v,-verbose=>$v);
+    exit $v;
+}
 
-#urlrule_set_callback('process_passdown',\&process_passdown);
-
-my $RESUME_FILE = '.urlrule_resume';
-my $phnd = MyPlace::ReEnterable->new('main');
-my $cwd = getcwd();
-$SIG{INT} = \&sig_killed;
-
-my $RULE = new MyPlace::URLRule::OO(
+$CONF = MyPlace::URLRule::Config->new();
+$PROGRAM = $CONF->resume();
+if(@ARGV) {
+    $PROGRAM->push($CWD,'load_rule',undef,@ARGV);
+}
+else {
+    $PROGRAM->loadFromFile();
+	my $opts = $PROGRAM->getState("OPTIONS");
+	if($opts) {
+		%OPTS = (
+			%{$opts},
+			%OPTS,
+		);
+	}
+	$PROGRAM->setState("OPTIONS",\%OPTS);
+	if(!$PROGRAM->length) {
+		print STDERR "Nothing to resume\n";
+		print STDERR "Read tasks from STDIN...\n";
+		while(<STDIN>) {
+			chomp;
+			my $line = shift;
+			my @args = split($line,"\t");
+			$PROGRAM->push($CWD,'load_rule',undef,@args);
+		}
+	}
+}
+$RULE = new MyPlace::URLRule::OO(
 		buildurl=>1,
 		createdir=>1,
 		callback_nextlevel=>\&process_passdown,
 );
+my $appname = $0;
+$appname =~ s/^.+\///;
+$MSG = MyPlace::Script::Message->new($appname);
+$CWD = getcwd();
 
-sub process_passdown {
-	my ($resp) = @_;
-    my $cwd = getcwd();
-	$phnd->push($cwd,'load_rule',@{$resp}{qw/title url level action/});
-}
-
-sub load_rule {
-    my $cwd = getcwd();
-	my ($title,$url,$level,$action) = @_;
-	$RULE->autoApply($url,$level,$action,$title);
-    chdir $cwd;
+if($OPTS{test}) {
+	$OPTS{'no-history'} = 1;
+	$RULE->{request}->{AfterApplyRule} = \&after_apply_rule;
 }
 
-sub sig_killed {
-    app_message("saving remained tasks...\n");
-    if($phnd->{lastStack}) {
-        $phnd->unshift(@{$phnd->{lastStack}});
-    }
-    chdir($cwd) if($cwd);
-    $phnd->saveToFile($RESUME_FILE);
-    app_message($phnd->length," tasks saved to $RESUME_FILE\n");
-    exit 1;
+if(!$OPTS{'no-history'}) {
+	$HISTORY = $CONF->history;
+	$HISTORY->load();
 }
+$URLIGNORE = $CONF->ignore();
+$URLIGNORE->load();
+$URLIGNORE->close();
 
-if(@ARGV) {
-    $phnd->push($cwd,'load_rule',undef,@ARGV);
+$SIG{INT} = \&sig_killed;
+
+while(my $tasks = $PROGRAM->length) {
+    $MSG->blue("[$tasks] tasks remained\n");
+    $PROGRAM->run();
 }
-elsif(-f $RESUME_FILE) {
-    $phnd->loadFromFile($RESUME_FILE);
+$MSG->message("All tasks completed.\n");
+if(!$OPTS{"no-history"}) {
+	$HISTORY->save_last();
+	$HISTORY->write();
 }
-else {
-	while(<STDIN>) {
-		chomp;
-		my $line = shift;
-		my @args = split($line,"\t");
-		$phnd->push($cwd,'load_rule',undef,@args);
-	}
-}
-while(my $tasks = $phnd->length) {
-    app_error("[$tasks] tasks remained\n");
-    my @this = $phnd->peek();
-    if(@this) {
-        my $wdir = shift @this;
-        my $cmd = shift @this;
-#        app_warning("rule       -  @this\n");
-#        app_warning("directory  -  $wdir\n");
-    }
-    $phnd->run();
-}
-app_message "All tasks completed.\n";
-unlink $RESUME_FILE if(-f $RESUME_FILE);
 exit 0;
