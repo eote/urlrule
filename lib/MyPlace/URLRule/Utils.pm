@@ -8,9 +8,9 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&get_url &filename &parse_pages);
+    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html);
 }
-
+use Encode qw/from_to decode/;
 use MyPlace::LWP;
 my $lwp = new MyPlace::LWP('progress'=>1);
 $lwp->{UserAgent}->timeout(15);
@@ -40,20 +40,66 @@ sub get_url {
 	$lwp->{progress} = 1;
 	return $data;
 }
-
-sub filename {
-	foreach(@_) {
-		next unless($_);
-		s/^\./_/g;
-		s/[\/\\\?\*]/_/g;
+sub decode_html {
+	my $html = shift;
+	my $charset;
+	if($html =~ /(<meta[^>]*http-equiv\s*=\s*"?Content-Type"?[^>]*>)/i) {
+		my $meta = $1;
+		if($meta =~ m/charset\s*=\s*["']?([^"'><]+)["']?/) {
+			$charset = $1;
+		}
 	}
-	if(wantarray) {
-		return @_;
+	return $html unless($charset);
+	return $html if($charset =~ m/^[Uu][Tt][Ff]-?8$/);
+	if($charset =~ m/^[Gg][Bb]\d+/) {
+		$charset = "gbk";
+	}
+	return decode($charset,$html);
+}
+
+sub get_html {
+	my $url = shift;
+	my $html = get_url($url,@_);
+	return decode_html($html) if($html);
+}
+
+sub extract_pages {
+	my $url = shift;
+	my $rule = shift;
+	my @exps = (
+			'<[Aa][^>]*href=[\'"]([^\'"<]*\/list\/[\d\-]+\/index_)(\d+)([^\/"\'<]+)[\'"]',
+			'<a href=["\']([^\'"]*\/(?:cn\/index|flei\/index|list\/|part\/|list\/index|list\/\?|cha\/index|html\/part\/index)\d+[-_])(\d+)(\.html?)',
+			'<[Aa][^>]*href=[\'"]([^\'"<]*\/[^\/<]+\/index_)(\d+)([^\/"\'<]+)[\'"]',
+			'<[Aa][^>]*href=[\'"](index_)(\d+)([^\/"\']+)[\'"]',
+
+		);
+	my %r;
+	my $html = get_html($url,'-v');
+	foreach(@exps) {
+		next unless($html =~ m/$_/);
+		%r = urlrule_quick_parse(
+			"url"=>$url,
+			html=>$html,
+			'pages_exp'=>$_,
+			'pages_map'=>'$2',
+			'pages_pre'=>'$1',
+			'pages_suf'=>'$3',
+		);
+		last;
+	}
+	if(!%r) {
+		%r = (
+			url=>$url,
+			pass_data=>[$url]
+		);
 	}
 	else {
-		return $_[0] if($_[0]);
+		patch_result($url,\%r,$url);
 	}
+	return %r;
 }
+
+
 sub parse_pages {
 	my %d = @_;
 	my $url = $d{source};
