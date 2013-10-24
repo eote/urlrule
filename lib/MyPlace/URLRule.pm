@@ -1,4 +1,10 @@
 #!/usr/bin/perl -w
+package MyPlace::URLRule::Request;
+sub new {
+	my $class = shift;
+	return bless {url=>'',level=>'',action=>''},$class;
+}
+
 package MyPlace::URLRule;
 use URI;
 use URI::Escape;
@@ -12,8 +18,8 @@ BEGIN {
     our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
-	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback/;
-    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &parse_rule &apply_rule &get_domain &get_rule_dir set_callback);
+	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback get_rule_handler/;
+    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &urlrule_quick_parse &parse_rule &apply_rule &get_domain &get_rule_dir set_callback get_rule_handler);
 }
 
 #my $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
@@ -24,6 +30,11 @@ our @URLRULE_LIB = (getcwd . "/urlrule",$USER_URLRULE_DIRECTORY,$URLRULE_DIRECTO
 
 
 unshift @INC,@URLRULE_LIB;
+foreach(@URLRULE_LIB) {
+	require "$_/config.pm" if(-f "$_/config.pm");
+}
+my $Config = $MyPlace::URLRule::Config || {'maps.domain'=>{}};
+
 my %CALLBACK;
 
 sub get_rule_dir() {
@@ -47,45 +58,15 @@ sub get_domain($) {
 sub new_rule {
 	return parse_rule(@_);
 }
-sub parse_rule {
-    my %r;
-    $r{url} = shift;
-    if($r{url} =~ /^local:([^\/]+)/) {
-        $r{"local"} = $1;
-        $r{url} =~ s/^local:/file_/;
-        if($r{url} =~ /^file_[^\/]+\/(.*)$/) {
-            $r{"local_path"} = abs_path($1);
-        }
-    }
-    if($r{url} !~ /^https?:\/\//i) {
-        $r{url} = "http://" . $r{url};
-    }
-    $r{level} = shift;
-    if($r{level} and $r{level} =~ /^domain:(.*)$/) {
-        $r{domain} = $1;
-        $r{level} = shift;
-    }
-    $r{domain} = get_domain($r{url}) unless($r{domain});
-
-    if($r{level}) {
-       if($r{level} !~ /^\d+$/) {
-        unshift @_,$r{level};
-        $r{level} = 0;
-       }
-    }
-    else {
-        $r{level} = 0;
-    }
-    $r{action} = shift;
-    $r{action} = "" unless($r{action});
-    @{$r{args}} = @_;
-    my $domain = $r{domain};
+sub locate_source {
+	my $domain = shift;
+	my $level = shift;
+	my $source = undef;
     do 
     {
         foreach my $directory (
-			map {("$_/$r{level}","$_/common")} @URLRULE_LIB
+			map {("$_/$level","$_/common")} @URLRULE_LIB
 		){
-#			print STDERR "Try $directory - $domain\n";
             next unless(-d $directory);
             for my $basename 
                     (
@@ -98,13 +79,68 @@ sub parse_rule {
             {
                 if(-f "$directory/$basename") 
                 {
-                    $r{source} = "$directory/$basename";
+                    $source = "$directory/$basename";
                     last;
                 }
             }
-            last if($r{source});
+            last if($source);
         }
-    } while($domain =~ s/^[^\.]*\.// and !$r{source});
+    } while($domain =~ s/^[^\.]*\.// and !$source);
+	return $source;
+}
+sub parse_rule {
+    my %r;
+    $r{url} = shift;
+    $r{level} = shift;
+    if($r{level} and $r{level} =~ /^domain:(.*)$/) {
+        $r{domain} = $1;
+        $r{level} = shift;
+    }
+
+    if($r{level}) {
+       if($r{level} !~ /^\d+$/) {
+        unshift @_,$r{level};
+        $r{level} = 0;
+       }
+    }
+    else {
+        $r{level} = 0;
+    }
+	if($r{url} =~ m/^urlrule:\/\/([^\/]+)\/(\d+)\/(.+)$/) {
+		$r{target}=$3;
+		$r{url}=$1;
+		$r{target_level}=$r{level};
+		$r{level}=$2;
+	}
+	else {
+		$r{target}=$r{url};
+		$r{target_level}=$r{level};
+	}
+    if($r{url} =~ /^local:([^\/]+)/) {
+        $r{"local"} = $1;
+        $r{url} =~ s/^local:/file_/;
+        if($r{url} =~ /^file_[^\/]+\/(.*)$/) {
+            $r{"local_path"} = abs_path($1);
+        }
+    }
+    if($r{url} !~ /^https?:\/\//i) {
+        $r{url} = "http://" . $r{url};
+    }
+    $r{domain} = get_domain($r{url}) unless($r{domain});
+    $r{action} = shift;
+    $r{action} = "" unless($r{action});
+    @{$r{args}} = @_;
+    my $domain = $r{domain};
+	$r{source} = locate_source($r{domain},$r{level});
+	if(!$r{source}) {
+		my $domain = $r{domain};
+		my $md;
+		do {
+			$md  = $Config->{'maps.domain'}->{$domain};
+			$r{source} = locate_source($md,$r{level}) if($md);
+		} while($domain =~ s/^[^\.]*\.// and !$r{source});
+		$r{domain} = $md if($r{source});
+	}
 	if(!$r{source}) {
 		foreach(@URLRULE_LIB) {
 			if(-d $_) {
@@ -115,6 +151,10 @@ sub parse_rule {
 	}
     $r{source} 
         = "urlrule/$r{level}/$r{domain}" unless($r{source});
+	$r{url}=$r{target};
+	$r{level}=$r{target_level};
+	$r{target}=undef;
+	$r{target_level}=undef;
     return \%r;
 }
 
@@ -137,6 +177,80 @@ sub callback_apply_rule {
 		my $func = shift @callback;
 		&$func(@_,@callback);
 	}
+}
+
+sub get_request {
+	
+}
+
+my %CACHED_RULE = ();
+sub get_rule_handler {
+	my $info = shift;
+	if(!ref $info) {
+		unshift @_,$info;
+		$info = parse_rule(@_);
+	}
+	if(!($info || ref $info || %{$info})) {
+		return {error=>'Rule not defined'},undef;
+	}
+	my $source = $info->{source};
+	if(!-f $source) {
+		return {error=>"Rule not defined:$source"},undef;
+	}
+	my $id = $source;
+	if($CACHED_RULE{$id}) {
+		return $CACHED_RULE{$id};
+	}
+	my $package = "MyPlace::URLRule::Rule::$id";
+	$package =~ s/[\/\\\.]/_/g;
+	print STDERR "Importing rule $source\n";
+	no warnings "redefine";
+	eval "package $package;do \"$source\";"; 
+	eval "package $package;" . '
+		sub apply {
+			my $self = shift(@_);
+			my $url = shift(@_);
+			my $level = shift(@_);
+			my $info = MyPlace::URLRule::parse_rule($url,$level);
+			my ($status,@result) = apply_rule($url,$info);
+			return undef,"Nothing to do" unless($status);
+			return undef,"Nothing to do" unless(@result);
+		    my %result = ($status,@result);
+		    if($result{"#use quick parse"}) {
+				%result = MyPlace::URLRule::urlrule_quick_parse(url=>$url,%result);
+		    }
+			$result{rule} = $info;
+		    return 1,\%result;
+		}
+	';
+=no eval
+	no warnings "redefine";
+	package MyPlace::URLRule::RuleBridge;
+	do $source;
+	if(!defined ${MyPlace::URLRule::RuleBridge::}{apply}) {
+		${MyPlace::URLRule::RuleBridge::}{apply} = sub {
+			my $self = shift;
+			my $info = MyPlace::URLRule::parse_rule(@_);
+			return MyPlace::URLRule::RuleBridge::apply_rule($info->{url},$info);
+		}
+	}
+	if(!defined (*MyPlace::URLRule::RuleBridge::new)) {
+		*MyPlace::URLRule::RuleBridge::new = sub {
+			my $class = shift;
+			return bless {},$class;
+		};
+	}
+=cut
+	no warnings "redefine";
+	print STDERR "$@\n" if($@);
+	$@=undef;
+	package MyPlace::URLRule;
+	my $rule = bless {
+			source=>$source,
+			package=>$package
+		},$package;
+	$CACHED_RULE{$id} = $rule;
+	return $rule;
 }
 
 sub apply_rule {
@@ -168,6 +282,7 @@ sub apply_rule {
 	use warnings;
     my ($status,@result) = MyPlace::URLRule::Rule::apply_rule($url,$rule);
     return undef,'Nothing to do' unless($status);
+	return undef,'Nothing to do' unless(@result);
     my %result = ($status,@result);
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);
@@ -178,7 +293,8 @@ sub apply_rule {
 
 sub urlrule_quick_parse {
     my %args = @_;
-    my $url = $args{url};;
+    my $url = $args{url};
+	my $html = $args{html};
 
     die("Error 'url=>undef'\n") unless($url);
     my $title;
@@ -194,7 +310,12 @@ sub urlrule_quick_parse {
         pages_exp pages_map pages_pre pages_suf pages_start pages_margin
         charset
     /};
-    my $html = get_url($url,'-v',(defined $charset ? "charset:$charset" : undef),'referer'=>$url);
+
+    $html = get_url($url,'-v',(defined $charset ? "charset:$charset" : undef),'referer'=>$url) unless($html);
+	return (
+		'Error',
+		"Failed restriving $url",
+	) unless($html);
     my @data;
     my @pass_data;
     my @pass_name;
@@ -204,8 +325,11 @@ sub urlrule_quick_parse {
     $pass_map = '$1' unless($pass_map);
 	my %LOCAL_VAR;
     $pass_name_map = $pass_name_exp unless($pass_name_map);
-    if($data_exp) {
-        while($html =~ m/$data_exp/og) {
+	if($args{data}) {
+		@data = @{$args{data}};
+	}
+    elsif($data_exp) {
+        while($html =~ m/$data_exp/g) {
 			my $r = eval $data_map;
 			#print STDERR "$data_exp => $data_map => $r\n";
 			next unless($r);
@@ -214,8 +338,12 @@ sub urlrule_quick_parse {
 			$h_data{$r} = 1;
         }
     }
-    if($pass_exp) {
-        while($html =~ m/$pass_exp/og) {
+	if($args{pass_data}) {
+		@pass_data = @{$args{pass_data}};
+		@pass_name = @{$args{pass_name}} if($args{pass_name});
+	}
+    elsif($pass_exp) {
+        while($html =~ m/$pass_exp/g) {
             my $r = eval $pass_map;
 			next if($h_pass{$r});
             push @pass_data,$r;
@@ -241,7 +369,10 @@ sub urlrule_quick_parse {
 			push @pass_data,@{$pages};
 		}
     }
-    if($title_exp) {
+	if($args{title}) {
+		$title = $args{title};
+	}
+    elsif($title_exp) {
         $title_map = '$1' unless($title_map);
         if($html =~ m/$title_exp/) {
             $title = eval $title_map;
@@ -250,6 +381,7 @@ sub urlrule_quick_parse {
 #	use Data::Dumper;die(Dumper(\%h_pass));
 #    @data = delete_dup(@data) if(@data);
 #    @pass_data = delete_dup(@pass_data) if(@pass_data and (!@pass_name));
+	
     return (
         count=>scalar(@data),
         data=>[@data],
@@ -261,6 +393,17 @@ sub urlrule_quick_parse {
         work_dir=>$title,
         %args,
     );
+}
+
+package MyPlace::MyPlace::RuleBridge::Object;
+sub new {
+	my $class = shift;
+	return bless {},$class;
+}
+sub apply {
+	my $self = shift;
+	my $info = parse_rule(@_);
+	return MyPlace::URLRule::RuleBridge::apply_rule($info->{url},$info);
 }
 
 1;
