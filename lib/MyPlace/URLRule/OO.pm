@@ -1,9 +1,17 @@
 package MyPlace::URLRule::OO;
-use MyPlace::URLRule qw/parse_rule apply_rule @URLRULE_LIB/;
+use MyPlace::URLRule qw/parse_rule apply_rule @URLRULE_LIB get_rule_handler/;
+ 
 use strict;
 use warnings;
-use Cwd qw/getcwd/;
+use Cwd qw//;
 use MyPlace::Script::Message;
+use File::Basename;
+
+sub getcwd {
+	use Encode qw/decode_utf8/;
+	my $c=&Cwd::getcwd;
+	return decode_utf8($c,1);
+}
 
 sub lib {
 	my $self = shift;
@@ -12,6 +20,18 @@ sub lib {
 	}
 	else {
 		return \@URLRULE_LIB;
+	}
+}
+
+sub short_wd {
+	my $full = shift;
+	my $base = shift;
+	$base =~ s/[^\/]+$//;
+	if($base) {
+		return substr($full,length($base));
+	}
+	else {
+		return $full;
 	}
 }
 
@@ -27,6 +47,7 @@ sub new {
 	if($self->{request}->{buildurl}) {
 		require URI;
 	}
+	$self->{startwd} = getcwd();
 	$self = bless $self,$class;
 	MyPlace::URLRule::set_callback(
 		'apply_rule',
@@ -143,7 +164,20 @@ sub to_response {
 
 sub applyRule {
 	my ($self,$rule,$request) = @_;
-	my ($status,$result) = apply_rule($rule);
+	my $handler = get_rule_handler($rule);
+	if(!$handler) {
+		return 0,{error=>"No handler found for $rule->{url}"},$rule;
+	}
+	if($self->{request}->{BeforeApplyRule}) {
+		$self->{request}->{BeforeApplyRule}($rule,$request,$handler);
+	}
+	my ($status,$result) = $handler->apply($request->{url},$request->{level});
+	if($self->{request}->{AfterApplyRule}) {
+		($status,$result) = $self->{request}->{AfterApplyRule}($status,$result,$rule,$request,$handler);
+	}
+	if($result && $result->{error}) {
+		$status = 0;
+	}
 	if(!$status) {
 		return $status,$result,$rule;
 	}
@@ -173,7 +207,12 @@ sub autoApply {
 		$self->{response} = undef;
 	}
 	elsif(!$status) {
-		app_error($self->{msghd},$result,"\n");
+		if($result->{error}) {
+			app_error($self->{msghd},"Error: $result->{error}","\n");
+		}
+		else {
+			app_error($self->{msghd},$result,"\n");
+		}
 		return $status;
 	}
 	elsif(!$result->{success}) {
@@ -234,7 +273,9 @@ sub changedir {
 sub makedir {
 	my $self = shift;
 	my $dir = shift;
-	#return 1 if(-d $dir);
+	my $pdir = dirname($dir);
+	makedir($pdir) unless(-d $pdir);
+	return if(-d $dir);
 	app_prompt($self->{msghd} . 'Creates directory',$dir,"\n");
 	mkdir($dir);
 }
@@ -310,7 +351,8 @@ sub do_action {
 		app_prompt($self->{msghd},colored("No data\n",'RED'));
 		return undef, 'No data';
 	}
-    app_prompt($self->{msghd} . "In ",getcwd,"\n");
+#	print STDERR $self->{startwd},":STARTWD\n";
+    app_prompt($self->{msghd} . "In ",short_wd(getcwd,$self->{startwd}),"\n");
     my $file=$response->{file};
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
 	my $action = $response->{pipeto} || $response->{action} || '';
@@ -354,7 +396,7 @@ sub do_action {
 	}
     elsif($action) {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-        my $childpid = open FO,"|-",$action;
+        my $childpid = open FO,"|-:utf8",$action;
 #		print STDERR "Childpid:$childpid\n";
 		if($childpid) {
 			print FO "$_\n" foreach(@{$data});
