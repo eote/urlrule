@@ -50,7 +50,6 @@ sub decode_html {
 		}
 	}
 	return $html unless($charset);
-	return $html if($charset =~ m/^[Uu][Tt][Ff]-?8$/);
 	if($charset =~ m/^[Gg][Bb]\d+/) {
 		$charset = "gbk";
 	}
