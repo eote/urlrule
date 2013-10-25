@@ -217,6 +217,7 @@ sub extract_article {
 			'<div class=temp22[^>]*>(.+?)<\/div>',
 			'div id="twcc">(.+)<div class="gecns"',
 			'(<DIV class=title>.+?</DIV></DIV>)',
+			'<div class="n_bd">(.+?)<p>',
 		);
 	}
 	if($D{articleTitle}) {
@@ -225,7 +226,7 @@ sub extract_article {
 		}
 	}
 	else {
-		if($html =~ m/<[Tt][Ii][Tt][Ll][Ee]>([^<]+?)\s*-\s*|<[Tt][Ii][Tt][Ll][Ee]>\s*([^<]+?)\s*</) {
+		if($html =~ m/<[Tt][Ii][Tt][Ll][Ee]>([^<]+?)\s*-\s*[^<-]+<|<[Tt][Ii][Tt][Ll][Ee]>\s*([^<]+?)\s*</) {
 			$title = $1 || $2;
 		}
 	}
@@ -254,7 +255,7 @@ sub extract_article {
 		$img++;
 		my $url = $1;
 		my $ext = ".jpg";
-		if($url =~ m/(\.[^\.]+)$/) {
+		if($url =~ m/\/.*(\.[^\.\/]+)$/) {
 			$ext = $1;
 		}
 		push @data,"$url\t$title\." . strnum($img,3) . $ext;
@@ -381,6 +382,8 @@ sub extract_videoinfo {
 		'<div id="idDIV"> <p>(.+?)<\/p> <\/div>',
 		'<div class="video-box">(.+?)<div class="correlation">',
 		'<div id="classpage">(.+?<\/[Uu][Ll]>)',
+		'<div class="ContentImg">(.+?)<a[^>]*href=',
+		'<div class="main">(.+?)<div id="footer">',
 		);
 	}
 	my $cover_exp = $D{cover} || 'class="cover"><[Ii][Mm][Gg] src="([^"]+)"';
@@ -522,7 +525,7 @@ sub extract_item {
 		foreach(@cover) {
 			my $url = $_;
 			my $ext = ".jpg";
-			if($url =~ m/(\.[^\.]+)$/) {
+			if($url =~ m/\/.*(\.[^\.\/]+)$/) {
 				$ext = $1;
 			}
 			my $prefix = $idx == 1 ? "" : "." . strnum($idx,3);
@@ -581,6 +584,8 @@ sub extract_list {
 				span><a\s*href=[\'"]((?:\/html\/article\/index|a)\d+[^\'"]*)[\'"]\s*title="
 				<td[^>]*><[aA][^>]*href=['"](\/[^'">\/]+\/\d+\/)['"]
 				<(?:TD|td|P\s*class=p2)[^>]*>[^<]*<[aA][^>]*href=['"]([^'"]+)
+				<li><a[^>]*href=['"]([^'"]*\/html\/article\/index\d+\.html?)
+				<div[^>]*class="pic"[^>]*><a[^>]*href=['"]([^'"]*\/view\/index\d+\.html?) 
 				<[Aa][^>]*href=['"]([^'"<]*\/[^\/<]+\/\d+[^\/"'<]+)['"]\s*title=
 			};
 		}
