@@ -8,12 +8,32 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html);
+    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape);
 }
 use Encode qw/from_to decode/;
 use MyPlace::LWP;
 my $lwp = new MyPlace::LWP('progress'=>1);
 $lwp->{UserAgent}->timeout(15);
+
+sub js_unescape {
+	if(!@_) {
+		return;
+	}
+	elsif(@_ == 1) {
+		$_ = $_[0];
+        $_ =~ s/%u([0-9a-f]+)/chr(hex($1))/eig;
+        $_ =~ s/%([0-9a-f]{2})/chr(hex($1))/eig;
+		return $_;
+	}
+	else {
+		my @r;
+		foreach(@_) {
+			$_ = js_unescape($_);
+			push @r,$_;
+	    }
+		return @r;
+	}
+}
 
 sub get_url {
 	my $url = shift;
