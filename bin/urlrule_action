@@ -169,9 +169,15 @@ $URLIGNORE->close();
 
 $SIG{INT} = \&sig_killed;
 
+my $TASKSDONE = 0;
 while(my $tasks = $PROGRAM->length) {
     $MSG->blue("[$tasks] tasks remained\n");
     $PROGRAM->run();
+	$TASKSDONE++;
+	if(($TASKSDONE % 19) == 0) {
+	    $PROGRAM->saveToFile();
+		$MSG->green($PROGRAM->length . " tasks AUTO saved.\n");
+	}
 }
 $MSG->message("All tasks completed.\n");
 if(!$OPTS{"no-history"}) {
