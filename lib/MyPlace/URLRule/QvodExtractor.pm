@@ -6,10 +6,10 @@ BEGIN {
     our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
-    @EXPORT         = qw(&extract_videolinks &extract_article &extract_item &extract_videoinfo &extract_items &extract_pages &extract_catalogs);
-    @EXPORT_OK         = qw(&extract_videolinks &extract_article &extract_item &extract_videoinfo &extract_items &extract_pages &extract_catalogs apply_rule process);
+    @EXPORT         = qw(&extract_videolinks &extract_article &extract_item &extract_videoinfo &extract_list &extract_pages &extract_catalogs);
+    @EXPORT_OK         = qw(&extract_videolinks &extract_article &extract_item &extract_videoinfo &extract_list &extract_pages &extract_catalogs apply_rule process);
 }
-use MyPlace::URLRule::Utils qw/get_html get_url/;
+use MyPlace::URLRule::Utils qw/get_html get_url js_unescape/;
 use MyPlace::URLRule qw/urlrule_quick_parse/;
 use Encode qw/find_encoding from_to encode decode/;
 my $utf8 = find_encoding('utf8');
@@ -217,7 +217,7 @@ sub extract_article {
 			'<div class=temp22[^>]*>(.+?)<\/div>',
 			'div id="twcc">(.+)<div class="gecns"',
 			'(<DIV class=title>.+?</DIV></DIV>)',
-			'<div class="n_bd">(.+?)<p>',
+			'<div class="n_bd">(.+?)</p>',
 		);
 	}
 	if($D{articleTitle}) {
@@ -303,6 +303,7 @@ sub extract_videolinks {
 			'\'([^\']+)\$([^\']+?)\$(?:bdhd|qvod)\'',
 			'([^\'"\|\$]*)\$((?:bdhd|qvod):\/\/\d+\|\w+\|[^\'"\|\$]+?\|?)[#\':]+',
 			'url = "((?:qvod|bdhd|ed2k)://[^"]+)"',
+			'([^"]+?)%2B%2B((?:qvod|bdhd|ed2k)%3A%2F%2F[^"]+?)(?:%2B%2B%2B|")',
 		);
 	};
 	my $matched;
@@ -312,22 +313,21 @@ sub extract_videolinks {
 		while($html =~ m/$exp/g) {
 			$matched = 1;
 			$idx++;
-#			print STDERR "GET_QVOD:[$1] $2\n";
 			my $part1 = $1;
 			my $part2 = $2;
 			if(!$part2) {
 				$part2 = $part1;
-				$part1 = $idx;
+				$part1 = strnum($idx,3);
 			}
-			$part1 =~ s/"+$//;
-			$part1 =~ s/^"+//;
-			$part2 =~ s/"+$//;
-			$part2 =~ s/^"+//;
-			if($part1 =~ m/\\u|\\x/) {
-				$part1 = (eval("\"\" . \"$part1\""));
-			}
-			if($part2 =~ m/\\u|\\x/) {
-				$part2 = (eval("\"\" . \"$part2\""));
+			foreach($part1,$part2) {
+				s/"+$//;
+				s/^"+//;
+				s/%E7%AC%AC/第/g;
+				s/%E9%9B%86/集/g;
+				$_ = js_unescape($_);
+				if(m/\\u|\\x/) {
+					$_ = (eval("\"\" . \"$_\""));
+				}
 			}
 			my $ext = '';
 			my $url = lc($part2);
@@ -340,17 +340,17 @@ sub extract_videolinks {
 			if($url =~ m/(\.[^\.\|\/]+?)\|?$/) {
 				$ext = $1;
 			}
-			if($url =~ m/^(?:qvod|http)/) {
+			if($url =~ m/^(?:qvod|http|bdhd)/) {
 				push @{$qvod{qvod}},[$part2,$part1,$ext];
 				$qvod{qvodcount}++;
 			}
-			elsif($url =~ m/^(?:bdhd|ed2k)/) {
+			elsif($url =~ m/^(?:ed2k)/) {
 				push @{$qvod{bdhd}},[$part2,$part1,$ext];
 				$qvod{bdhdcount}++;
 			}
 			else {
 				push @{$qvod{unknown}},[$part2,$part1,$ext];
-				$qvod{unknown}++;
+				$qvod{unknowncount}++;
 			}
 		}
 	}
@@ -373,6 +373,7 @@ sub extract_videoinfo {
 	}
 	else {
 		@text_strip = (
+		'<div class="m-info">(.+?)<div class="mtext">',
 		'<div class="mainArea">(.+?)<div class="bbg',
 		'(<ul class="movieintro">.+?<\/ul>)',
 		'(<div class="intro">.+?</div>)</td>',
@@ -388,9 +389,10 @@ sub extract_videoinfo {
 		);
 	}
 	my $cover_exp = $D{cover} || 'class="cover"><[Ii][Mm][Gg] src="([^"]+)"';
-	my $playurl_exp = $D{playurl} || '<a[^>]*href=[\'"]([^\'"]*\/(?:sogou\/index|playmovie\/\d+|player\/|video\/|kk\/index)[^\'"]+)';
+	my $playurl_exp = $D{playurl} || '<a[^>]*href=[\'"]([^\'"]*\/(?:sogou\/index|vod-play-id-|playmovie\/\d+|player\/|video\/|kk\/index)[^\'"]+)';
 	my @title_exp = ($D{itemTitle}) || (
 		'<li[^>]*class=[\'"]title[\'"][^>]*>([^<]+)',
+		'<[Tt][Ii][Tt][Ll][Ee]>\s*([^<]+?)\s*(?:_qvod高清在线观看)',
 		'<[Tt][Ii][Tt][Ll][Ee]>\s*([^<]+?)\s*(?:全集在线观看|在线播放|在线观看|快播Qvod在线播放)',
 		'<[Tt][Ii][Tt][Ll][Ee]>\s*正在播放\s*([^<]+)\s*',
 	);
@@ -520,7 +522,7 @@ sub extract_item {
 			elsif($count > 1) {
 				foreach(@qvod) {
 					my $url = "$type:" . $_->[0];
-					my $part = $_->[1];
+					my $part = $_->[1] ? "_$_->[1]" : "";
 					my $ext = $_->[2];
 					push @data,"$url\t$title$part$ext";
 				}
@@ -582,9 +584,15 @@ sub extract_list {
 		my @html = split("\n",$html);
 		my %r;
 		$_=$html;
-		my $title_exp = $D{listTitle} || '<\s*(?:title|TITLE)\s*>\s*([^<\s_]+)';
-		if(!$r{title} && m/$title_exp/) {
-			$r{title} = normalize_title($1);
+		my $title_exp = $D{listTitle} ? [$D{listTitle}] : [
+					'<\s*[Tt][iI][Tt][Ll][Ee]\s*>\s*([^<\s_]+)-第\d+页',
+					'<\s*(?:title|TITLE)\s*>\s*([^<\s_]+)',
+				];
+		foreach my $exp(@{$title_exp}) {
+			if(m/$exp/) { 
+				$r{title} = $1;
+				last;
+			}
 		}
 		$r{pass_data}=[];
 		my @list_exp;
@@ -593,6 +601,7 @@ sub extract_list {
 		}
 		else {
 			@list_exp = qw{
+				<div\s*class="intro"><h6><a\s*href="([^"]+)
 				<li><a[^>]*href="([^"<]*\/html\/(?:photo|movie|text)\d+\/\d+\.html?)
 				class="tit"><a[^>]*href="([^"]+\/vodhtml\/[^"]+)
 				(?:[hH]3|[Hh]2)><[Aa][^<]*href=[\'"]((?:\/hao360\/index|\/movie\/index|\/detail\/\?|\/bibi\/index|\/view\/index|\/html\/article\/index)\d+[^\'"]*)"
@@ -631,6 +640,7 @@ sub extract_pages {
 		}
 		else {
 			@exps = (
+				'<[Aa][^>]*href=\s*["\']([^"\']*\/vod-show-id-\d+-p-)(\d+)(\.html)["\']',
 				'<a href=[\'"]([^\'"]*\/(?:photo|movie|text)\d+\/list_)(\d+)(\.html?)',
 				'href="([^"]*\/vodlist\/\d+_)(\d+)(\.html)"',
 				'<[Aa][^>]*href=[\'"]([^\'"<]*\/list\/[\d\-]+\/index_)(\d+)([^\/"\'<]+)[\'"]',
