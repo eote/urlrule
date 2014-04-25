@@ -8,13 +8,48 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape);
+    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data);
 }
 use Encode qw/from_to decode/;
-use MyPlace::LWP;
-my $lwp = new MyPlace::LWP('progress'=>1);
-$lwp->{UserAgent}->timeout(15);
+use MyPlace::Curl;
+use MyPlace::Script::Message qw/set_color color_channel/;
 
+my $TELLER = MyPlace::Script::Message->new();
+
+my $cookie = $ENV{HOME} . "/.curl_cookies.dat";
+my $cookiejar = $ENV{HOME} . "/.curl_cookies2.dat";
+my $curl = MyPlace::Curl->new(
+	"location"=>'',
+	"silent"=>'',
+	"show-error"=>'',
+	"cookie"=>$cookie,
+	"cookie-jar"=>$cookiejar,
+);
+
+sub new_html_data {
+	my $html = shift;
+	my $title = shift;
+	my $base = shift;
+	my $r = '
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />';
+$r = $r . "\n<title>$title</title>" if($title);
+$r = $r . "\n<base href=\"$base\"> " if($base);
+$r = $r . "\n</head>\n<body>\n" . $html . "\n</body>\n</html>";
+$r =~ s/\n/\0/sg;
+	return "data://$r\t$title.html";
+}
+
+sub strnum {
+	my $val = shift;
+	my $numlen = shift(@_) || 0;
+	return $val if($numlen<2);
+	return $val if($val >= (10**$numlen));
+	my $str = "0"x$numlen . $val;
+	return substr($str,length($str) - $numlen);
+}
 sub js_unescape {
 	if(!@_) {
 		return;
@@ -39,25 +74,27 @@ sub get_url {
 	my $url = shift;
 	my $verbose = shift;
 	return undef unless($url);
-	if(!$verbose) {
+	if($verbose) {
+		if($verbose eq '-q') {
+		}
+		elsif($verbose eq '-v') {
+			print STDERR "Retriving $url ...";
+		}
+		else {
+			print STDERR "Retriving $url ...";
+			unshift @_,$verbose;
+		}
 	}
-	elsif($verbose eq '-q') {
-		$lwp->{progress} = 0;
-	}
-	elsif($verbose eq '-v') {
-		print STDERR "Retriving $url ";
+	set_color(*STDERR,"error");
+	#$curl->set('silent', 1);
+	my ($status,$data) = $curl->get($url,@_);
+	set_color(*STDERR,"reset");
+	if($status != 0) {
+	#	print STDERR "\r[" . $curl->error_message($status) . "] $url         \n";
 	}
 	else {
-		unshift @_,$verbose;
+		print STDERR "\t[OK]\n" unless($verbose eq '-q');
 	}
-	my ($status,$data,$res) = $lwp->get($url,'timeout',15,@_);
-	if(!$status) {
-		print STDERR ' [' . $res->status_line . "]\n";
-	}
-	else {
-		print STDERR "\n";
-	}
-	$lwp->{progress} = 1;
 	return $data;
 }
 sub decode_html {

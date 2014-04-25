@@ -6,11 +6,13 @@ use warnings;
 use Cwd qw//;
 use MyPlace::Script::Message;
 use File::Basename;
+use MyPlace::Program::Saveurl;
+use Encode qw/decode_utf8 encode_utf8 find_encoding/;
+my $UTF8 = find_encoding("utf-8");
+my $PROGRAM_SAVE;
 
 sub getcwd {
-	use Encode qw/decode_utf8/;
-	my $c=&Cwd::getcwd;
-	return decode_utf8($c,1);
+	return $UTF8->decode(Cwd::getcwd());
 }
 
 sub lib {
@@ -85,7 +87,7 @@ sub request {
 	if(!ref $request) {
 		unshift @_,$request;
 		$request = {};
-		@{$request}{qw/url level action title/} = @_;
+		@{$request}{qw/url level action title progress/} = @_;
 	}
 #	print STDERR (Data::Dumper->Dump([$request],['*request']));
 	$request = {%{$self->{request}},%{$request}};
@@ -188,7 +190,7 @@ sub applyRule {
 sub autoApply {
 	my $self = shift;
 	my ($rule,$res) = $self->request(@_);
-	$self->{msghd} = "[Level $rule->{level}] ";
+	$self->{msghd} = ($res->{progress} || '') . "[L$rule->{level}] ";
 	$self->{response} = undef;
 	$self->{callback_called} = undef;
 	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
@@ -217,7 +219,7 @@ sub autoApply {
 	}
 	elsif(!$result->{success}) {
 		app_error($self->{msghd},"Rule not working for $res->{url}\n");
-		next;
+		return $result->{success};
 	}
 	push @responses,$result if($status);
 	my $cwd = getcwd;
@@ -233,15 +235,17 @@ sub autoApply {
 				}
 			}
 			my $cwd = getcwd;
-			my $idx = 0;
+			my $count = $next{count};
+			my $idx = $count;
 			foreach my $req (@{$next{data}}) {
 				$req = {
 					level=>$next{level},
 					action=>$next{action},
+					progress=>($res->{progress} || "") . "[$idx/$count]",
 					%{$req}
 				};
+				$idx--;
 				$self->processNextLevel($req);
-				$idx++;
 				chdir($cwd);
 			}
 		}
@@ -351,14 +355,13 @@ sub do_action {
 		app_prompt($self->{msghd},colored("No data\n",'RED'));
 		return undef, 'No data';
 	}
-#	print STDERR $self->{startwd},":STARTWD\n";
     app_prompt($self->{msghd} . "In ",short_wd(getcwd,$self->{startwd}),"\n");
+	my $base = $response->{base} || $rule->{base} || $rule->{url};
     my $file=$response->{file};
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
 	my $action = $response->{pipeto} || $response->{action} || '';
 #    print Data::Dumper->Dump([$response],qw/*response/);
 	{
-		my $base = $response->{base} || $rule->{base} || $rule->{url};
 		$action =~ s/#URLRULE_BASE#/$base/g;
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}
@@ -394,12 +397,21 @@ sub do_action {
 			system("$action \"$_\"");
 		}
 	}
+	elsif($action eq 'SAVE') {
+		app_prompt($self->{msghd} . 'Action',"$action\n");
+		if(!$PROGRAM_SAVE) {
+			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
+			$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
+		}
+		$PROGRAM_SAVE->addTask(@{$data});
+		$PROGRAM_SAVE->execute();
+	}
     elsif($action) {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
         my $childpid = open FO,"|-:utf8",$action;
 #		print STDERR "Childpid:$childpid\n";
 		if($childpid) {
-			print FO "$_\n" foreach(@{$data});
+			print FO join("\n",@{$data}),"\n";
 			close FO;
 			waitpid($childpid,0);
 		}

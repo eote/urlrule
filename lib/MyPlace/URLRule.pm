@@ -55,9 +55,7 @@ sub get_domain($) {
         return $url;
     }
 }
-sub new_rule {
-	return parse_rule(@_);
-}
+
 sub locate_source {
 	my $domain = shift;
 	my $level = shift;
@@ -88,6 +86,7 @@ sub locate_source {
     } while($domain =~ s/^[^\.]*\.// and !$source);
 	return $source;
 }
+
 sub parse_rule {
     my %r;
     $r{url} = shift;
@@ -177,10 +176,6 @@ sub callback_apply_rule {
 		my $func = shift @callback;
 		&$func(@_,@callback);
 	}
-}
-
-sub get_request {
-	
 }
 
 my %CACHED_RULE = ();
@@ -280,10 +275,9 @@ sub apply_rule {
 	use warnings;
     package MyPlace::URLRule;
 	use warnings;
-    my ($status,@result) = MyPlace::URLRule::Rule::apply_rule($url,$rule);
-    return undef,'Nothing to do' unless($status);
-	return undef,'Nothing to do' unless(@result);
-    my %result = ($status,@result);
+    my @r = MyPlace::URLRule::Rule::apply_rule($url,$rule);
+    return undef,'Nothing to do' unless(@r);
+    my %result = @r;
     if($result{"#use quick parse"}) {
         %result = urlrule_quick_parse('url'=>$url,%result);
     }
@@ -311,7 +305,7 @@ sub urlrule_quick_parse {
         charset
     /};
 
-    $html = get_url($url,'-v',(defined $charset ? "charset:$charset" : undef),'referer'=>$url) unless($html);
+    $html = get_url($url,'-v',(defined $charset ? "charset:$charset" : undef),'--referer'=>$url) unless($html);
 	return (
 		'Error',
 		"Failed restriving $url",
@@ -390,7 +384,7 @@ sub urlrule_quick_parse {
         pass_name=>[@pass_name],
         base=>$url,
         no_subdir=>(@pass_name ? 0 : 1),
-        work_dir=>$title,
+        title=>$title,
         %args,
     );
 }

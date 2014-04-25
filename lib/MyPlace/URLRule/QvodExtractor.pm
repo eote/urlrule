@@ -189,6 +189,12 @@ $r = $r . "\n</head>\n<body>\n" . $content . "\n</body>\n</html>";
 return $r;
 }
 
+sub nothing_msg {
+	return (
+		count=>0,
+		message=>join("\n",@_),
+	);
+}
 sub error_msg {
 	return (
 		'error'=>join("\n",@_),
@@ -235,9 +241,9 @@ sub extract_article {
 			$content = $1;
 		}
 	}
-	return error_msg("Missing article content, Or not a article.") unless($content);
+	return nothing_msg("Missing article content, Or not a article.") unless($content);
 #	print STDERR "$content\n";
-	if($content =~ m/<img|thunder|<div|href=/) {
+	if($content =~ m/(?:src|href)\s*=|<\s*(?:object|embed)|thunder:/) {
 		$ext=".html";
 		$content = build_html_page($content,$title);
 	}
@@ -251,10 +257,16 @@ sub extract_article {
 	$title = normalize_title($title);
 	push @data,"file://$tmpfile\t$title$ext";
 	my $img=0;
+	my %imgs;
 	while($content =~ m/<[Ii][Mm][Gg][^<]*[Ss][Rr][Cc]\s*=\s*['"]([^'"]+)['"]/g) {
+		next if($imgs{$1});
+		$imgs{$1} = 1;
 		$img++;
 		my $url = $1;
 		my $ext = ".jpg";
+		if($url =~ m/^http:\/\/([^\/\.]*\.?)([^\/]+)\.\/(.+)$/) {
+			$url = $1 eq "." ? "http://www.$2.com/$3" : "http://$1$2.com/$3";
+		}
 		if($url =~ m/\/.*(\.[^\.\/]+)$/) {
 			$ext = $1;
 		}
@@ -434,10 +446,16 @@ sub extract_videoinfo {
 		}
 	}
 	if($r{text}) {
+		my %imgs;
 		while($r{text} =~ m/<[Ii][Mm][Gg][^<]*\s+[Ss][Rr][Cc]=['"]([^'"]+)['"]/g) {
 			$r{cover} = [] unless($r{cover});
+			next if($imgs{$1});
+			$imgs{$1} = 1;
 			my $src = $1;
 			next if($src =~ m/qvod_download|\.png/);
+			if($src =~ m/^http:\/\/([^"]+)\.\/(.+)$/) {
+				$src = "http://$1.com/$2";
+			}
 			push @{$r{cover}},$src;
 		}
 	#	if(!$r{catalog} &&	$r{text} =~ m/(?:分类|类型)\s*[:：]\s*<[^>]+>\s*([^<]+)/m) {
@@ -591,6 +609,7 @@ sub extract_list {
 		foreach my $exp(@{$title_exp}) {
 			if(m/$exp/) { 
 				$r{title} = $1;
+				$r{title} = normalize_title($r{title});
 				last;
 			}
 		}
@@ -703,7 +722,7 @@ sub extract_catalog {
 			last;
 		}
 		if((!%r) || (!$r{pass_data}) || !($r{pass_data}->[0])) {
-			return error_msg("Extract nothing\n");
+			return nothing_msg("Extract nothing\n");
 		}
 		else {
 			patch_result($rurl,\%r,$url);
