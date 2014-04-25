@@ -28,9 +28,7 @@ my $urlrule_action = `which urlrule_action`;
 chomp($urlrule_action);
 die("Error: Program \"urlrule_action\" not found\n") unless(-f $urlrule_action);
 if(@ARGV) {
-	my $saveurl = `which saveurl`;
-	chomp($saveurl);
-	die("Error: Program \"saveurl\" not found\n") unless(-f $saveurl);
+	my $saveurl = "SAVE";
 	my $url = shift;
 	die("Usage $0 <URL> [LEVEL]\n") unless($url);
 	my $level = shift;
