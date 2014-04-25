@@ -47,31 +47,43 @@ sub after_apply_rule {
 sub process_passdown {
 	my ($resp) = @_;
     my $CWD = getcwd();
-	$PROGRAM->push($CWD,'load_rule',@{$resp}{qw/title url level action/});
+	$PROGRAM->push($CWD,'load_rule',@{$resp}{qw/title url level action progress/});
 }
 
 sub load_rule {
     my $CWD = getcwd();
-	my ($title,$url,$level,$action) = @_;
+	my ($title,$url,$level,$action,$progress) = @_;
 	my $rep = $url . ($level ? "|$level" : "");
 	if($URLIGNORE->check($rep)) {
 		$MSG->message("Ignored: $rep\n");
-		return 1;
+		goto END_LOAD_RULE;
 	}
 	if(!$OPTS{"no-history"}) {
 		if($action && (!$level)) {
 			if($HISTORY->check($url)) {
 				$MSG->message("Ignored, URL'd been processed. $url\n");
-				return;
+				goto END_LOAD_RULE;
 			}
 		}	
 	}
-	my $status = $RULE->autoApply($url,$level,$action,$title);
+	my $status;
+	my $retry = 0;
+	while(1) {
+		$status = $RULE->autoApply($url,$level,$action,$title,$progress);
+		last if($status);
+		last if($retry > 3);
+		$MSG->warning("Retry in 60 seconds ...\n");
+		$retry++;
+		sleep 60;
+	}
+	$retry = 0;
 	if(!$OPTS{"no-history"}) {
 		if($status && (!$level)) {
 			$HISTORY->save($url);
 		}
 	}
+END_LOAD_RULE:
+#print STDERR "Return to $CWD\n";
     chdir $CWD;
 }
 
@@ -81,7 +93,7 @@ sub sig_killed {
 	}
     $MSG->message("Saving remained tasks...\n");
     if($PROGRAM->{lastStack}) {
-        $PROGRAM->unshift(@{$PROGRAM->{lastStack}});
+        $PROGRAM->push(@{$PROGRAM->{lastStack}});
     }
     chdir($CWD) if($CWD);
     $PROGRAM->saveToFile();
@@ -99,7 +111,12 @@ sub set_options {
 use MyPlace::Script::Message;
 use MyPlace::URLRule::OO;
 use MyPlace::URLRule::Config;
-use Cwd qw/getcwd/;
+use Cwd qw//;
+use Encode qw/find_encoding/;
+my $UTF8 = find_encoding("utf8");
+sub getcwd {
+	return $UTF8->decode(Cwd::getcwd());
+}
 @OPTIONS = qw/
 	help|h|? 
 	manual|man
