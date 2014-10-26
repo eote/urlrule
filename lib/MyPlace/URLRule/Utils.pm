@@ -10,11 +10,9 @@ BEGIN {
     @EXPORT         = qw();
     @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data);
 }
-use Encode qw/from_to decode/;
+use Encode qw/from_to decode encode/;
 use MyPlace::Curl;
-use MyPlace::Script::Message qw/set_color color_channel/;
 
-my $TELLER = MyPlace::Script::Message->new();
 
 my $cookie = $ENV{HOME} . "/.curl_cookies.dat";
 my $cookiejar = $ENV{HOME} . "/.curl_cookies2.dat";
@@ -24,6 +22,8 @@ my $curl = MyPlace::Curl->new(
 	"show-error"=>'',
 	"cookie"=>$cookie,
 	"cookie-jar"=>$cookiejar,
+#	"retry"=>4,
+	"max-time"=>120,
 );
 
 sub new_html_data {
@@ -72,28 +72,41 @@ sub js_unescape {
 
 sub get_url {
 	my $url = shift;
-	my $verbose = shift;
+	my $verbose = shift(@_) || '-q';
+	my $silent;
+
+	my $retry = 4;
 	return undef unless($url);
-	if($verbose) {
-		if($verbose eq '-q') {
-		}
-		elsif($verbose eq '-v') {
-			print STDERR "Retriving $url ...";
-		}
-		else {
-			print STDERR "Retriving $url ...";
-			unshift @_,$verbose;
-		}
+
+	if(!$verbose) {
 	}
-	set_color(*STDERR,"error");
-	#$curl->set('silent', 1);
-	my ($status,$data) = $curl->get($url,@_);
-	set_color(*STDERR,"reset");
-	if($status != 0) {
-	#	print STDERR "\r[" . $curl->error_message($status) . "] $url         \n";
+	elsif('-q' eq "$verbose") {
+		$verbose = undef;
+		$silent = 1;
+	}
+	elsif('-v' eq "$verbose") {
+		$verbose = 1;
+		$silent = undef;
 	}
 	else {
-		print STDERR "\t[OK]\n" unless($verbose eq '-q');
+		unshift @_,$verbose;
+		$verbose = undef;
+		$silent = undef;
+	}
+
+	my $data;
+	my $status;
+	print STDERR "[Retriving URL] $url ..." if($verbose);
+	while($retry) {
+		($status,$data) = $curl->get($url,@_);
+		if($status != 0) {
+			print STDERR "[Retry " . (5 - $retry) . "][Retriving URL] $url ..." if($verbose);
+		}
+		else {
+			print STDERR "\t[OK]\n" unless($silent);
+			last;
+		}
+		$retry--;
 	}
 	return $data;
 }
@@ -110,7 +123,9 @@ sub decode_html {
 	if($charset =~ m/^[Gg][Bb]\d+/) {
 		$charset = "gbk";
 	}
-	return decode($charset,$html);
+#	from_to($html,$charset,'utf-8');
+	$html = decode($charset,$html);
+	return $html;
 }
 
 sub get_html {

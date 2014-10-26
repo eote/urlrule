@@ -1,4 +1,6 @@
 package MyPlace::URLRule::OO;
+our $VERSION = 'v2.0';
+
 use MyPlace::URLRule qw/parse_rule apply_rule @URLRULE_LIB get_rule_handler/;
  
 use strict;
@@ -7,12 +9,14 @@ use Cwd qw//;
 use MyPlace::Script::Message;
 use File::Basename;
 use MyPlace::Program::Saveurl;
-use Encode qw/decode_utf8 encode_utf8 find_encoding/;
-my $UTF8 = find_encoding("utf-8");
+#use Encode qw/decode_utf8 encode_utf8 find_encoding/;
+use utf8;
+#my $UTF8 = find_encoding("utf-8");
 my $PROGRAM_SAVE;
 
 sub getcwd {
-	return $UTF8->decode(Cwd::getcwd());
+	goto &Cwd::getcwd;
+	#return $UTF8->decode(Cwd::getcwd());
 }
 
 sub lib {
@@ -35,6 +39,14 @@ sub short_wd {
 	else {
 		return $full;
 	}
+}
+
+sub reset {
+	my $self = shift;
+	foreach (qw/msghd response outdated callback_called exitval/){;
+		delete $self->{$_};
+	}
+	return $self;
 }
 
 sub new {
@@ -62,8 +74,11 @@ sub new {
 sub _safe_path {
 	foreach(@_) {
 		next unless($_);
-		s/^\./_/g;
-		s/[\/\\\?\*]/_/g;
+		s/^\.+//g;
+		s/:/ - /g;
+		#s/[\/\\\?\*]/_/g;
+		s/^\s+|[\.\s]+$|(?<=\/)\s+|[\.\s]+(?=\/)//g;
+		s/\s+/ /g;
 	}
 	if(wantarray) {
 		return @_;
@@ -89,80 +104,13 @@ sub request {
 		$request = {};
 		@{$request}{qw/url level action title progress/} = @_;
 	}
-#	print STDERR (Data::Dumper->Dump([$request],['*request']));
 	$request = {%{$self->{request}},%{$request}};
 	$request->{action} = 'COMMAND:echo' unless($request->{action});
 	my $rule = parse_rule(@{$request}{qw/url level action/});
-#	$request->{title} = _safe_path($request->{title}) if($request->{title});
-	#$rule->{title} = $request->{title};
+	#print STDERR (Data::Dumper->Dump([$rule,$request],[qw/*rule *request/]));
 	return ($rule,$request);
 }
 
-sub to_response {
-	my ($self,$result,$rule) = @_;
-	if($result) {
-		my %response = %{$result};
-		$response{success} = 1;
-		$response{target} = $rule;
-		$response{data} = [] unless($response{data});
-		$response{count} = scalar(@{$response{data}});
-		$response{action} = $rule->{action} unless($response{action});
-		$response{title} = $response{work_dir} unless($response{title});
-		delete $response{work_dir};
-		if($self->{request}->{createdir} and $response{title}) {
-			$response{title} = _safe_path($response{title});
-		}
-		unless(defined $response{level}) {
-			$response{level} = $rule->{level} if($response{samelevel} || $response{same_level});
-		}
-		unless(defined $response{level}) {
-			$response{level} = $rule->{level}  - 1;
-		}
-		if($response{pass_data} and @{$response{pass_data}}) {
-			if(!$response{pass_count}) {
-				$response{pass_count} = scalar(@{$response{pass_data}});
-			}
-			if($response{pass_name}) {
-				my $idx = -1;
-				if($self->{request}->{createdir}) {
-					foreach(@{$response{pass_data}}) {
-						$idx++;
-						next if(ref $_);
-						$response{pass_name}->[$idx] = _safe_path($response{pass_name}->[$idx]);
-						$_ = {url=>$_,title=>$response{pass_name}->[$idx]};
-					}
-				}
-				else {
-					foreach(@{$response{pass_data}}) {
-						$idx++;
-						next if(ref $_);
-						$_ = {url=>$_,title=>$response{pass_name}->[$idx]};
-					}
-				}
-				delete $response{pass_name};
-			}
-			else {
-				foreach(@{$response{pass_data}}) {
-					next if(ref $_);
-					$_ = {url=>$_};
-				}
-			}
-			$response{next_level} = {
-				count=>$response{pass_count},
-				base=>$response{base},
-				data=>$response{pass_data},
-			#	name=>$response{pass_name},
-				action=>$response{action},
-				level=>$response{level}
-			};
-		}
-#		$response{title} = _safe_path($response{title}) if($response{title});
-		return \%response;
-	}
-	else {
-		return undef;
-	}
-}
 
 sub applyRule {
 	my ($self,$rule,$request) = @_;
@@ -173,21 +121,21 @@ sub applyRule {
 	if($self->{request}->{BeforeApplyRule}) {
 		$self->{request}->{BeforeApplyRule}($rule,$request,$handler);
 	}
-	my ($status,$result) = $handler->apply($request->{url},$request->{level});
+	my ($status,$result) = $handler->apply($request->{url},$request->{level},$request->{action});
 	if($self->{request}->{AfterApplyRule}) {
 		($status,$result) = $self->{request}->{AfterApplyRule}($status,$result,$rule,$request,$handler);
 	}
-	if($result && $result->{error}) {
-		$status = 0;
-	}
-	if(!$status) {
-		return $status,$result,$rule;
-	}
-	my $response = $self->to_response($result,$rule,$request);
-	return $status,$response,$rule;
+	return $status,$result,$rule;
 }
 
-sub autoApply {
+sub outdated {
+	my $self = shift;
+	$self->{outdated} = 1;
+	app_warning($self->{msghd} . 'STOP HERE DATA IS OUTDATED',"\n");
+	return;
+}
+
+sub aa_apply_rule {
 	my $self = shift;
 	my ($rule,$res) = $self->request(@_);
 	$self->{msghd} = ($res->{progress} || '') . "[L$rule->{level}] ";
@@ -195,12 +143,131 @@ sub autoApply {
 	$self->{callback_called} = undef;
 	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
 	if($self->{request}->{createdir} && $res->{title}) {
-		if(! -d $res->{title}) {
-			$self->makedir($res->{title}) or die("$!\n");
+		my $wd = _safe_path($res->{title});
+		if(! -d $wd) {
+			$self->makedir($wd) or die("$!\n");
 		}
-		$self->changedir($res->{title},'autoApply request') or die("$!\n");
+		$self->changedir($wd,'autoApply request') or die("$!\n");
 	}
 	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
+    app_prompt($self->{msghd} . "Directory",short_wd(getcwd,$self->{startwd}),"\n");
+	my ($status,$result) = $self->applyRule($rule,$res);
+	if(!$status) {
+		if($result->{error}) {
+			app_error($self->{msghd},"Error: $result->{error}","\n");
+		}
+		elsif($result->{message}) {
+			app_message($self->{msghd},$result->{message},"\n");
+		}
+		else {
+			app_error($self->{msghd},"Unknown error accoure\n");
+		}
+		return $status;
+	}
+	elsif($result->{failed}) {
+		app_error($self->{msghd},"Rule not working for $res->{url}\n");
+		return undef;
+	}
+	else {
+		return $rule,$res,$result;
+	}
+}
+
+sub aa_process_result {
+	my $self = shift;
+	my ($rule,$res,$response) = @_;
+	$self->process($response,$rule);
+	return 0;
+}
+
+sub aa_process_nextlevel {
+	my $self = shift;
+	my ($rule,$res,$response) = @_;
+	return 1 unless($response->{nextlevel});
+	my %next = %{$response->{nextlevel}};
+	app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n");# if($next{level});
+	$self->{msghd} = "[Level $next{level}] ";
+	if($response->{base} and $self->{request}->{buildurl}) {
+		foreach(@{$next{data}}) {
+			#print STDERR $_,"\n";
+			if(m/^(.+)\s*\t\s*([^\t]+)$/) {
+				$_ = URI->new_abs($1,$response->{base})->as_string . "\t$2"
+			}
+			else {
+				$_ = URI->new_abs($_,$response->{base})->as_string;
+			}	
+		}
+	}
+	my $count = $next{count};
+	my $idx = $count;
+	my @requests;
+	foreach my $link (@{$next{data}}) {
+		my $linkname = undef;
+		if($link =~ m/^(.+)\s*\t\s*([^\t]+)$/) {
+			$link = $1;
+			$linkname = $2;
+		}
+		my $req = {
+			level=>$next{level},
+			action=>$next{action},
+			progress=>($res->{progress} || "") . "[$idx/$count]",
+			url=>$link,
+			title=>$linkname,
+		};
+		$idx--;
+		push @requests,$req;
+	}
+	return $rule,$res,$response,@requests;
+}
+
+sub autoApply2 {
+	my $self = shift;
+	return 2 if($self->{outdated});
+	my $DIR_KEEP = getcwd;
+	my ($rule,$res,$result) = $self->aa_get_response(@_);
+	if(!($rule and $result)) {
+		chdir $DIR_KEEP;
+		return 3;
+	}
+	my @data = $self->aa_process_result($rule,$res,$result);
+	$self->aa_process_data($rule,$res,$result,@data);
+	if($self->{outdated}) {
+		chdir $DIR_KEEP;
+		return 2;
+	}
+	my $DIR_NOW = getcwd;
+	my @requests = $self->aa_process_nextlevel($rule,$res,$result);
+	foreach(@requests) {
+		$self->aa_process_request($_);
+		if($self->{outdated}) {
+			chdir $DIR_KEEP;
+			return 2;
+		}	
+		chdir($DIR_NOW);
+	}
+	chdir $DIR_KEEP;
+	return 0;
+}
+
+
+sub autoApply {
+	my $self = shift;
+	return 2 if($self->{outdated});
+	my $DIR_KEEP = getcwd;
+	my ($rule,$res) = $self->request(@_);
+	$self->{msghd} = ($res->{progress} || '') . "[L$rule->{level}] ";
+	$self->{response} = undef;
+	$self->{callback_called} = undef;
+	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
+	if($self->{request}->{createdir} && $res->{title}) {
+		my $wd = _safe_path($res->{title});
+		if(! -d $wd) {
+			$self->makedir($wd) or die("$!\n");
+		}
+		$self->changedir($wd,'autoApply request') or die("$!\n");
+	}
+	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
+    app_prompt($self->{msghd} . "Directory",short_wd($DIR_KEEP,$self->{startwd}),"\n");
 	my ($status,$result) = $self->applyRule($rule,$res);
 	my @responses;
 	if($self->{callback_called}) {
@@ -212,46 +279,86 @@ sub autoApply {
 		if($result->{error}) {
 			app_error($self->{msghd},"Error: $result->{error}","\n");
 		}
-		else {
-			app_error($self->{msghd},$result,"\n");
+		elsif($result->{message}) {
+			app_message($self->{msghd},$result->{message},"\n");
 		}
+		else {
+			app_error($self->{msghd},"Unknown error accoure\n");
+		}
+		chdir($DIR_KEEP);
 		return $status;
 	}
-	elsif(!$result->{success}) {
+	elsif($result->{failed}) {
 		app_error($self->{msghd},"Rule not working for $res->{url}\n");
-		return $result->{success};
+		chdir($DIR_KEEP);
+		return undef;
 	}
 	push @responses,$result if($status);
-	my $cwd = getcwd;
 	foreach my $response (@responses) {
+		#if($response->{track_this}) {
+		#	die("Track this: \n\t" . join("\n\t",@{$response->{pass_data}},@{$response->{data}}),"\n")
+		#}
 		$self->process($response,$rule);
-		if($response->{next_level}) {
-			my %next = %{$response->{next_level}};
+		if($self->{outdated}) {
+			chdir $DIR_KEEP;
+			return 2;
+		}
+		if($response->{nextlevel}) {
+			my %next = %{$response->{nextlevel}};
 			app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n");# if($next{level});
+			#if($response->{track_this}) {
+			#	die("Track this: \n\t" . join("\n\t",@{$response->{pass_data}},@{$response->{data}}),"\n")
+			#}
 			$self->{msghd} = "[Level $next{level}] ";
 			if($response->{base} and $self->{request}->{buildurl}) {
 				foreach(@{$next{data}}) {
-					$_->{url} = URI->new_abs($_->{url},$response->{base})->as_string;
+					#print STDERR $_,"\n";
+					if(m/^(.+)\s*\t\s*([^\t]+)$/) {
+						$_ = URI->new_abs($1,$response->{base})->as_string . "\t$2"
+					}
+					else {
+						$_ = URI->new_abs($_,$response->{base})->as_string;
+					}	
 				}
 			}
 			my $cwd = getcwd;
 			my $count = $next{count};
 			my $idx = $count;
-			foreach my $req (@{$next{data}}) {
-				$req = {
+			my @requests;
+			foreach my $link (@{$next{data}}) {
+				my $linkname = undef;
+				if($link =~ m/^(.+)\s*\t\s*([^\t]+)$/) {
+					$link = $1;
+					$linkname = $2;
+				}
+				my $req = {
 					level=>$next{level},
 					action=>$next{action},
 					progress=>($res->{progress} || "") . "[$idx/$count]",
-					%{$req}
+					url=>$link,
+					title=>$linkname,
 				};
 				$idx--;
-				$self->processNextLevel($req);
-				chdir($cwd);
+				push @requests,$req;
+			}
+			if($self->{request}->{callback_nextlevels}) {
+				$self->{request}->{callback_nextlevels}(@requests);
+				chdir $cwd;
+			}
+			else {
+				foreach my $req (@requests) {
+					$self->processNextLevel($req);
+					if($self->{outdated}) {
+						chdir $DIR_KEEP;
+						return 2;
+					}	
+					chdir($cwd);
+				}
 			}
 		}
-		chdir($cwd);
 		$self->{msghd} = "[Level $rule->{level}] ";
 	}
+	chdir($DIR_KEEP);
 	return 1;
 }
 sub processNextLevel {
@@ -277,8 +384,12 @@ sub changedir {
 sub makedir {
 	my $self = shift;
 	my $dir = shift;
+	#print STDERR "DIR:$dir\n";
 	my $pdir = dirname($dir);
-	makedir($pdir) unless(-d $pdir);
+	#print STDERR "PDIR:$pdir\n";
+	if($pdir and (! -d $pdir)) {
+		$self->makedir($pdir);
+	}
 	return if(-d $dir);
 	app_prompt($self->{msghd} . 'Creates directory',$dir,"\n");
 	mkdir($dir);
@@ -311,7 +422,7 @@ sub process {
 	}
 	my $wd;
 	if($self->{request}->{createdir}) {
-		my $wd = $response->{work_dir} || $response->{title};
+		my $wd = _safe_path($response->{title});
 		if($wd) {
 			if(! -d $wd) {
 				$self->makedir($wd) or die("$!\n");
@@ -347,6 +458,9 @@ sub do_action {
 	my $data = shift;
 	my $response = shift;
 	my $rule = shift;
+
+	$self->{exitval} = 1;
+
     return undef,"No data" unless($data);
     if(ref $data eq 'SCALAR') {
 		$data = [$data];
@@ -355,7 +469,7 @@ sub do_action {
 		app_prompt($self->{msghd},colored("No data\n",'RED'));
 		return undef, 'No data';
 	}
-    app_prompt($self->{msghd} . "In ",short_wd(getcwd,$self->{startwd}),"\n");
+	#app_prompt($self->{msghd} . "Directory",short_wd(getcwd,$self->{startwd}),"\n");
 	my $base = $response->{base} || $rule->{base} || $rule->{url};
     my $file=$response->{file};
     $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
@@ -365,6 +479,7 @@ sub do_action {
 		$action =~ s/#URLRULE_BASE#/$base/g;
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}
+	$self->{DATAS_COUNT} = $self->{DATAS_COUNT} ? $self->{DATAS_COUNT} + @$data : @$data;
     if($file) {
 		app_prompt($self->{msghd} . 'Writes file',$file);
         if (-f $file) {
@@ -390,7 +505,7 @@ sub do_action {
 #		app_message("Dump result\n");
         print Data::Dumper->Dump([$response],qw/*response/);
     }
-	elsif($action =~ m/^COMMAND:(.+)$/) {
+	elsif($action =~ m/^COMMAND:\s*(.+?)\s*$/) {
 		$action = $1;
 		app_prompt($self->{msghd} . 'Action',"$action\n");
 		foreach(@{$data}) {
@@ -401,10 +516,54 @@ sub do_action {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
 		if(!$PROGRAM_SAVE) {
 			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
-			$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
+			$PROGRAM_SAVE->setOptions("--history","--referer",$base) if($base);
 		}
 		$PROGRAM_SAVE->addTask(@{$data});
 		$PROGRAM_SAVE->execute();
+	}
+	elsif($action eq 'UPDATE') {
+		app_prompt($self->{msghd} . 'Action',"$action\n");
+		my $OUTDATE = undef;
+		my @RECORDS;
+		if(open FI, '<',"URLS.txt") {
+			foreach(<FI>) {
+				chomp;
+				s/\t.+$//;
+				push @RECORDS,$_;
+			}
+			close FI;
+		}
+		my @KEEPS;
+		foreach(@{$data}) {
+			my $link = $_;
+			$link =~ s/\t.+$//;
+			foreach my $rec(@RECORDS) {
+				if($link eq $rec) {
+					$OUTDATE = 1;
+					last;
+				}
+			}
+			if($OUTDATE) {
+				last;
+			}
+			else {
+				push @KEEPS,$_;
+			}
+		}
+		if(@KEEPS) {
+			if(!$PROGRAM_SAVE) {
+				$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
+				$PROGRAM_SAVE->setOptions("--history","--referer",$base) if($base);
+			}
+			$PROGRAM_SAVE->addTask(@KEEPS);
+			$PROGRAM_SAVE->execute();
+			#if(open FO,">>","URLS.txt") {
+			#	print FO join("\n",@KEEPS),"\n";
+			#	close FO;
+			#}
+		}
+		$self->{DATAS_COUNT} = $self->{DATAS_COUNT} - @$data + @KEEPS;
+		$self->outdated() if($OUTDATE);
 	}
     elsif($action) {
 		app_prompt($self->{msghd} . 'Action',"$action\n");

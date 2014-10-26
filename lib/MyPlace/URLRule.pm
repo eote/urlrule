@@ -16,7 +16,7 @@ use strict;
 BEGIN {
     use Exporter ();
     our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
-    $VERSION        = 1.00;
+	$VERSION = 'v2.0';
     @ISA            = qw(Exporter);
 	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback get_rule_handler/;
     @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &urlrule_quick_parse &parse_rule &apply_rule &get_domain &get_rule_dir set_callback get_rule_handler);
@@ -56,6 +56,20 @@ sub get_domain($) {
     }
 }
 
+use File::Spec;
+sub locate_file {
+	my $name = shift;
+	my $filepath = $name;
+	foreach my $dir(@URLRULE_LIB) {
+		my $path = File::Spec->catfile($dir,$name);
+		if(-f $path || -d $path) {
+			$filepath = $path;
+			last;
+		}
+	}
+	return $filepath;
+}
+
 sub locate_source {
 	my $domain = shift;
 	my $level = shift;
@@ -87,6 +101,19 @@ sub locate_source {
 	return $source;
 }
 
+
+
+#parse_url
+#http://www.google.com
+#	-> {url=>http://www.google.com,domain=>google.com,level=>0}
+#http://www.google.com 1
+#	-> {url=>http://www.google.com,domain=>google.com,level=>1}
+#http://www.google.com 1 download
+#	-> {url=>http://www.google.com,domain=>google.com,level=>1,action=>download}
+#http://www.google.com download
+#	-> {url=>http://www.google.com,domain=>google.com,level=>0,action=>download}
+#http://www.google.com domain:baidu.com 1
+#	-> {url=>http://www.google.com,domain=>baidu.com,level=>1}
 sub parse_rule {
     my %r;
     $r{url} = shift;
@@ -152,8 +179,7 @@ sub parse_rule {
         = "urlrule/$r{level}/$r{domain}" unless($r{source});
 	$r{url}=$r{target};
 	$r{level}=$r{target_level};
-	$r{target}=undef;
-	$r{target_level}=undef;
+	delete @r{qw/target target_level/};
     return \%r;
 }
 
@@ -178,6 +204,79 @@ sub callback_apply_rule {
 	}
 }
 
+sub new_response {
+	my $url = shift;
+	my $rule = shift;
+	my $result = shift;
+	my %response = (
+		url=>$url,
+		rule=>$rule,
+		action=>$rule->{action},
+	);
+	if(!$result) {
+		$response{error} = "Rule defined, but return NOTHING";
+	}
+	elsif(!ref $result) {
+		$response{data} = [$result,@_];
+	}
+	elsif(ref $result eq 'ARRAY') {
+		$response{data} = $result;
+	}
+	else {
+		#$result->{action} = $rule->{action} unless($result->{action});
+		unless(defined $result->{level}) {
+			$result->{level} = $rule->{level} if($result->{samelevel} || $result->{same_level});
+		}
+		unless(defined $result->{level}) {
+			$result->{level} = $rule->{level}  - 1;
+		}
+
+		if($result->{data}) {
+			$result->{count} = @{$result->{data}};
+			delete $result->{data} if($result->{count}<1);
+		}
+
+		if($result->{pass_data} && @{$result->{pass_data}}) {
+			$result->{nextlevel} = {} unless($result->{next_level});
+			my $nl = $result->{nextlevel};
+			$nl->{data} = [] unless($nl->{data});
+			if($result->{pass_name} && @{$result->{pass_name}}) {
+				my $idx = 0;
+				foreach(@{$result->{pass_data}}) {
+					push @{$nl->{data}},$_ . "\t" . $result->{pass_name}[$idx];
+					$idx++;
+				}
+			}
+			else {
+				push @{$nl->{data}},@{$result->{pass_data}};
+			}
+			if(defined $result->{pass_count}) {
+				$nl->{count} = $result->{pass_count};
+			}
+			else {
+				$nl->{count} = @{$nl->{data}};
+			}
+			$nl->{level} = $result->{level};
+			$result->{nextlevel} = new_response($url,$rule,$nl);
+		}
+		else {
+			delete $result->{nextlevel};
+		}
+		$result->{title} = $result->{work_dir} unless($result->{title});
+		delete @$result{qw/pass_data pass_name work_dir pass_count/};
+		%response = (%response,%$result);
+		foreach(keys %response) {
+			delete $response{$_} unless(defined $response{$_});
+		}
+	}
+	if($response{error}) {
+		return undef,\%response;
+	}
+	else {
+		return 1,\%response;
+	}
+}
+
 my %CACHED_RULE = ();
 sub get_rule_handler {
 	my $info = shift;
@@ -198,7 +297,7 @@ sub get_rule_handler {
 	}
 	my $package = "MyPlace::URLRule::Rule::$id";
 	$package =~ s/[\/\\\.]/_/g;
-	print STDERR "Importing rule $source\n";
+	#app_message "Importing rule $source\n";
 	no warnings "redefine";
 	eval "package $package;do \"$source\";"; 
 	eval "package $package;" . '
@@ -206,16 +305,27 @@ sub get_rule_handler {
 			my $self = shift(@_);
 			my $url = shift(@_);
 			my $level = shift(@_);
-			my $info = MyPlace::URLRule::parse_rule($url,$level);
+			my $info = MyPlace::URLRule::parse_rule($url,$level,@_);
 			my ($status,@result) = apply_rule($url,$info);
-			return undef,"Nothing to do" unless($status);
-			return undef,"Nothing to do" unless(@result);
-		    my %result = ($status,@result);
+			my %result;
+			if(!@result) {
+				if($status) {
+					%result = (data=>[$status]);
+				}
+				else {
+					%result = (error=>"Nothing to do");
+				}
+			}
+			elsif(!$status) {
+				%result = (error=>$result[0]);
+			}
+			else {
+				%result = ($status,@result);
+			}
 		    if($result{"#use quick parse"}) {
 				%result = MyPlace::URLRule::urlrule_quick_parse(url=>$url,%result);
 		    }
-			$result{rule} = $info;
-		    return 1,\%result;
+			return MyPlace::URLRule::new_response($url,$info,\%result);
 		}
 	';
 =no eval
@@ -275,14 +385,26 @@ sub apply_rule {
 	use warnings;
     package MyPlace::URLRule;
 	use warnings;
-    my @r = MyPlace::URLRule::Rule::apply_rule($url,$rule);
-    return undef,'Nothing to do' unless(@r);
-    my %result = @r;
+	my ($status,@result) = MyPlace::URLRule::Rule::apply_rule($url,$rule);
+	my %result;
+	if(!@result) {
+		if($status) {
+			%result = (data=>[$status]);
+		}
+		else {
+			%result = (error=>"Nothing to do");
+		}
+	}
+	elsif(!$status) {
+		%result = (error=>$result[0]);
+	}
+	else {
+		%result = ($status,@result);
+	}
     if($result{"#use quick parse"}) {
-        %result = urlrule_quick_parse('url'=>$url,%result);
+		%result = MyPlace::URLRule::urlrule_quick_parse(url=>$url,%result);
     }
-	$result{rule} = $rule;
-    return 1,\%result;
+	return MyPlace::URLRule::new_response($url,$rule,\%result);
 }
 
 sub urlrule_quick_parse {
@@ -388,6 +510,7 @@ sub urlrule_quick_parse {
         %args,
     );
 }
+1;
 
 package MyPlace::MyPlace::RuleBridge::Object;
 sub new {
