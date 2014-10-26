@@ -2,16 +2,16 @@
 ###APPNAME:     urlrule_action
 ###APPAUTHOR:   eotect@myplace
 ###APPDATE:		Mon Mar 24 06:25:31 2008
-###APPVER:		1.0
+###APPVER:		2.0
 ###APPDESC:     apply rule for URL,and perform action	
 ###APPUSAGE:	urlrule_action URL [0-5] [action args...]
 ###APPEXAMPLE:	urlrule_action http://www.sina.com.cn 0 cat
 use strict;
 use utf8;
-binmode STDOUT,':utf8';
-binmode STDERR,':utf8';
-binmode STDIN,':utf8';
-our $VERSION = 'v0.1';
+#binmode STDOUT,':utf8';
+#binmode STDERR,':utf8';
+#binmode STDIN,':utf8';
+our $VERSION = 'v2.0';
 
 #GLOBAL VARAIBLE
 my @OPTIONS;
@@ -31,12 +31,12 @@ sub after_apply_rule {
 	my $rule = shift;
 	if($result && ref $result && !$result->{error}) {
 		if($rule->{level} <= $OPTS{test}) {
-			if($result->{pass_data} && @{$result->{pass_data}}) {
-				my $pcount = @{$result->{pass_data}};
+			if($result->{nextlevel}) {
+				my $pcount = $result->{nextlevel}{count};
 				my $ccount = 1;
 				if($ccount < $pcount) {
 					$MSG->warn("TEST MODE: trim PASS_DATA from <$pcount> down to <$ccount>\n");
-					$result->{pass_data} = [@{$result->{pass_data}}[0 .. $ccount-1]];
+					$result->{nextlevel}{data} = [@{$result->{nextlevel}{data}}[0 .. $ccount-1]];
 				}
 			}
 		}
@@ -45,9 +45,10 @@ sub after_apply_rule {
 }
 
 sub process_passdown {
-	my ($resp) = @_;
     my $CWD = getcwd();
-	$PROGRAM->push($CWD,'load_rule',@{$resp}{qw/title url level action progress/});
+	foreach my $resp (reverse @_) {
+		$PROGRAM->push($CWD,'load_rule',@{$resp}{qw/title url level action progress/});
+	}
 }
 
 sub load_rule {
@@ -67,17 +68,23 @@ sub load_rule {
 		}	
 	}
 	my $status;
-	my $retry = 0;
+	my $retry = 1;
 	while(1) {
 		$status = $RULE->autoApply($url,$level,$action,$title,$progress);
 		last if($status);
 		last if($retry > 3);
-		$MSG->warning("Retry in 60 seconds ...\n");
+		$MSG->warning("[$retry/3] Retry in 3 seconds ...\n");
 		$retry++;
-		sleep 60;
+		sleep 3;
+	}
+	if(!$status) {
+		$MSG->error("Failed appling rule to $url \[Level $level\]\n");
+		goto END_LOAD_RULE;
 	}
 	$retry = 0;
 	if(!$OPTS{"no-history"}) {
+		#THIS IS BUGGY, Because $status not always return mearningful value.
+		#ESPECIALLY when pass data to child program
 		if($status && (!$level)) {
 			$HISTORY->save($url);
 		}
@@ -88,6 +95,7 @@ END_LOAD_RULE:
 }
 
 sub sig_killed {
+	delete $SIG{INT};
 	if(!$OPTS{"no-history"}) {
 		$HISTORY->write();
 	}
@@ -135,6 +143,8 @@ if($OPTS{'help'} or $OPTS{'manual'}) {
     exit $v;
 }
 
+#$_ = $UTF8->decode($_) foreach(@ARGV);
+
 $CONF = MyPlace::URLRule::Config->new();
 $PROGRAM = $CONF->resume();
 if(@ARGV) {
@@ -164,7 +174,7 @@ else {
 $RULE = new MyPlace::URLRule::OO(
 		buildurl=>1,
 		createdir=>1,
-		callback_nextlevel=>\&process_passdown,
+		callback_nextlevels=>\&process_passdown,
 );
 my $appname = $0;
 $appname =~ s/^.+\///;

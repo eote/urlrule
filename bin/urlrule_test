@@ -2,7 +2,7 @@
 # $Id$
 use strict;
 require v5.8.0;
-our $VERSION = 'v0.1';
+our $VERSION = 'v2.0';
 
 BEGIN
 {
@@ -41,17 +41,10 @@ my $RH = new MyPlace::URLRule::OO(
 sub Dump {
 	my $RH = shift;
 	my $response = shift;
-	my %Response = (
-		data=>$response->{data},
-		pass_data=>$response->{pass_data},
-		pass_name=>$response->{pass_name},
-		title=>$response->{title},
-		base=>$response->{base},
-		work_dir=>$response->{work_dir},
-		level=>$response->{level},
-		count=>$response->{count},
-		pass_count=>$response->{pass_count},
-	);
+	my %Response;
+	foreach(qw/url level title data nextlevel/) {
+		$Response{$_} = $response->{$_};
+	}
 	print STDERR Data::Dumper->Dump([\%Response],['*Response']);
 }
 $RH->autoApply(@ARGV);

@@ -2,17 +2,20 @@
 ###APPNAME:     urlrule_dump
 ###APPAUTHOR:   duel
 ###APPDATE:	Mon Mar 24 06:25:31 2008
-###APPVER:	0.1
+###APPVER:	2.0
 ###APPDESC:     dump urlrule result	
 ###APPUSAGE:	URL [0-5]
 ###APPEXAMPLE:	urlrule_dump http://www.sina.com.cn 0
+our $VERSION = 'v2.0';
 use strict;
 use lib $ENV{XR_PERL_MODULE_DIR};
 use Data::Dumper;
 use utf8;
-binmode STDOUT,':utf8';
-binmode STDERR,':utf8';
-binmode STDIN,':utf8';
+#binmode STDOUT,':utf8';
+#binmode STDERR,':utf8';
+#binmode STDIN,':utf8';
+#use Encode qw/find_encoding/;
+#my $utf8 = find_encoding("utf8");
 my @OPTIONS = qw/
 	help|h|? 
 	manual|man
@@ -21,6 +24,9 @@ my @OPTIONS = qw/
 my %OPTS;
 if(@ARGV)
 {
+#	map {
+#	$_=$utf8->decode($_)
+#	} @ARGV;
     require Getopt::Long;
     Getopt::Long::GetOptions(\%OPTS,@OPTIONS);
 }
@@ -106,6 +112,7 @@ sub printkey {
 	}
 }
 
+print STDERR "\n";
 if($OPTS{info}) {
 	if(@ARGV) {
 		foreach(@ARGV) {
@@ -119,29 +126,26 @@ if($OPTS{info}) {
 			printkey($_);
 			printval($result->{$_}); 
 		}
-		printkey("pass_data:");
-		if($result->{pass_data} && @{$result->{pass_data}}) {
-			if($result->{pass_name} && @{$result->{pass_name}}) {
-				my $idx = 0;
-				print "\n";
-				foreach(@{$result->{pass_data}}) {
-					my $n = $result->{pass_name}->[$idx];
-					printkey("$n",2);
-					printval($_);
-					$idx++;
+		printkey("data");
+		if($result->{data} && @{$result->{data}}) {
+			print "\n";
+			foreach(@{$result->{data}}) {
+				if(m/^(.+)\t(.+)$/) {
+					printkey($2,2);
+					printval($1);
 				}
-			}
-			else {
-				printval($result->{pass_data});
+				else {
+					printval("\t$_");
+				}
 			}
 		}
 		else {
 			printval("undefined");
 		}
-		printkey("data");
-		if($result->{data} && @{$result->{data}}) {
+		printkey("nextlevel");
+		if($result->{nextlevel} && $result->{nextlevel}{count}) {
 			print "\n";
-			foreach(@{$result->{data}}) {
+			foreach(@{$result->{nextlevel}{data}}) {
 				if(m/^(.+)\t(.+)$/) {
 					printkey($2,2);
 					printval($1);

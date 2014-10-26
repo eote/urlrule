@@ -1,11 +1,12 @@
 #!/usr/bin/perl 
 # $Id$
+our $VERSION = 'v2.0';
 use strict;
 use warnings;
 use utf8;
-binmode STDERR,':utf8';
-binmode STDOUT,':utf8';
-binmode STDIN,':utf8';
+#binmode STDERR,'utf8';
+#binmode STDOUT,'utf8';
+#binmode STDIN,'utf8';
 use Cwd qw/getcwd/;
 use lib $ENV{XR_PERL_MODULE_DIR};
 use MyPlace::URLRule::OO;
@@ -34,13 +35,16 @@ my @OPTIONS = qw/
 		dump
 		no-urlhist|no-uh
 		overwrite|ow
+		database|db:s
+		hosts:s
 		/;
 my %OPTS;
+GetOptions(\%OPTS,@OPTIONS);
 
 my $phnd;
 my $TASK_LOGGING    = 1;
-my $TASK_DATABASE_NAME   = "DATABASE.URL";
-my $HOST_DATABASE_NAME = "HOSTS.URL";
+my $TASK_DATABASE_NAME   = $OPTS{"database"} || "DATABASE.URL";
+my $HOST_DATABASE_NAME = $OPTS{"hosts"} || "HOSTS.URL";
 my $NAMES_DATABASE = "NAMES.db";
 my @CONFIG_INC = (
 	File::Spec->curdir,
@@ -71,7 +75,6 @@ my $U_DOWNLOADER = 'batchget --maxtime 600 -U --nc -m 2 -f';#-r \'#URLRULE_HOST#
 my $S_DOWNLOADER = 'batchget --maxtime 600 --nc -m 2 -f';# -r \'#URLRULE_BASE#\'';
 my $TASK_WORKDIR = getcwd();;
 my $TASK_FILEHANDLE_LOG;
-GetOptions(\%OPTS,@OPTIONS);
 if($OPTS{'help'}) {
 	require Pod::Usage;
 	Pod::Usage::pod2usage('-exitval'=>1,'-verbose'=>1);
@@ -256,7 +259,13 @@ sub convert_records {
             my ($url) = $Hosts->propget($hostname);
             if($url) {
                 my ($level) = $Hosts->propget($hostname,$url);
-                my ($id_name,@id_text) = split(/\s*:\s*/,$id);
+                my ($id_name,@id_text);
+				if($id =~ m/^https?:\/\//) {
+					$id_name = $id;
+				}
+				else {
+					($id_name,@id_text) = split(/\s*:\s*/,$id);
+				}
                 $url =~ s/###(?:ID|NAME])###/$id_name/g;
                 $url =~ s/\{(?:ID|NAME])\}/$id_name/g;
                 my $index = 0;
@@ -543,6 +552,7 @@ if(@ARGV) {
 	&init_database;
 	foreach(@queries) {
 		next unless($_);
+		#$_ = $UTF8->decode($_);
 		my @q = split(/\s*,\s*/,$_);
 		foreach(@q) {
 			$_ = '/.?/' unless($_);
