@@ -8,7 +8,7 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data);
+    @EXPORT_OK      = qw(&new_json_data &get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data);
 }
 use Encode qw/from_to decode encode/;
 use MyPlace::Curl;
@@ -41,6 +41,36 @@ $r = $r . "\n</head>\n<body>\n" . $html . "\n</body>\n</html>";
 $r =~ s/\n/\0/sg;
 	return "data://$r\t$title.html";
 }
+
+sub hash2str {
+	my %data = @_;
+	my $r = "{";
+	foreach(keys %data) {
+		my $rt = ref $data{$_};
+		if(!$rt) {
+			$r = $r . "'$_':'$data{$_}',";
+		}
+		elsif($rt eq 'ARRAY') {
+			$r = $r . "'$_':['" . join("','",@{$data{$_}}) . "'],";
+		}
+		elsif($rt eq 'HASH') {
+			$r = $r . "'$_':" . hash2str(%{$data{$_}}) . ","; 
+		}
+		else {
+			$r = $r . "'$_':'$data{$_}',";
+		}
+	}
+	$r .= "};";
+	return $r;
+}
+
+sub new_json_data {
+	my $varname = shift;
+	my $filename = shift;
+	die "data://$varname = " . hash2str(@_) . "\t$filename.json";
+	return "data://$varname = " . hash2str(@_) . "\t$filename.json";
+}
+
 
 sub strnum {
 	my $val = shift;
@@ -196,6 +226,7 @@ sub parse_pages {
                     $suf = eval $pages_suf if($pages_suf);
             }
         }
+		$last = $d{limit} if($d{limit} and $d{limit} < $last);
 		for(my $i = $pages_start;$i<=$last;$i+=$pages_margin) {
 			push @pass_data,"$pre$i$suf";
 		}

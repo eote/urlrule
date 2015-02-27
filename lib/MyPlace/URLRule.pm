@@ -124,7 +124,11 @@ sub parse_rule {
     }
 
     if($r{level}) {
-       if($r{level} !~ /^\d+$/) {
+		if($r{level} =~ m/^:(.+)$/) {
+			$r{directory} = "$1";
+			$r{level} = 0;
+		}
+       elsif($r{level} !~ /^[+\-\d]+$/) {
         unshift @_,$r{level};
         $r{level} = 0;
        }
@@ -157,26 +161,27 @@ sub parse_rule {
     $r{action} = "" unless($r{action});
     @{$r{args}} = @_;
     my $domain = $r{domain};
-	$r{source} = locate_source($r{domain},$r{level});
+	$r{directory} = $r{level} unless($r{directory});
+	$r{source} = locate_source($r{domain},$r{directory});
 	if(!$r{source}) {
 		my $domain = $r{domain};
 		my $md;
 		do {
 			$md  = $Config->{'maps.domain'}->{$domain};
-			$r{source} = locate_source($md,$r{level}) if($md);
+			$r{source} = locate_source($md,$r{directory}) if($md);
 		} while($domain =~ s/^[^\.]*\.// and !$r{source});
 		$r{domain} = $md if($r{source});
 	}
 	if(!$r{source}) {
 		foreach(@URLRULE_LIB) {
 			if(-d $_) {
-				$r{source} = "$_/$r{level}/$r{domain}";
+				$r{source} = "$_/$r{directory}/$r{domain}";
 				last;
 			}
 		}
 	}
     $r{source} 
-        = "urlrule/$r{level}/$r{domain}" unless($r{source});
+        = "urlrule/$r{directory}/$r{domain}" unless($r{source});
 	$r{url}=$r{target};
 	$r{level}=$r{target_level};
 	delete @r{qw/target target_level/};
@@ -296,7 +301,7 @@ sub get_rule_handler {
 		return $CACHED_RULE{$id};
 	}
 	my $package = "MyPlace::URLRule::Rule::$id";
-	$package =~ s/[\/\\\.]/_/g;
+	$package =~ s/[\/\\\.-]/_/g;
 	#app_message "Importing rule $source\n";
 	no warnings "redefine";
 	eval "package $package;do \"$source\";"; 
@@ -363,48 +368,30 @@ sub apply_rule {
     unless($rule and ref $rule and %{$rule}) {
         return undef,"Invalid rule, could not apply!";
     }
-    my $level = $rule->{level};
-    my $url = $rule->{url};
-    my $source = $rule->{"source"};
-    unless(-f $source) {
-		return undef,"File not found: $source";
-    }
-	
-	no warnings 'redefine';
-	package MyPlace::URLRule::Rule;
-	no warnings 'redefine';
-	do $source;
+	my $handler = get_rule_handler($rule);
+	return $handler->apply($rule->{url},$rule->{level},$rule->{action});
+}
 
-	print STDERR "$@\n" if($@);
-	$@ = undef;
-
-	foreach(qw(@URLRULE_LIB $URLRULE_DIRECTORY &parse_rule &get_domain &get_rule_dir set_callback callback_apply_rule)) {
-		${MyPlace::URLRule::Rule::}{"$_"} = ${MyPlace::URLRule::}{"$_"};
-	}
+sub exp_runner {
+	my $exp = shift;
+	my $html = shift;
+	my $url = shift;
+	my @data = @_;
 	
-	use warnings;
-    package MyPlace::URLRule;
-	use warnings;
-	my ($status,@result) = MyPlace::URLRule::Rule::apply_rule($url,$rule);
-	my %result;
-	if(!@result) {
-		if($status) {
-			%result = (data=>[$status]);
-		}
-		else {
-			%result = (error=>"Nothing to do");
-		}
+	my $r;
+	if(!$exp) {
+		$r = $data[0];
 	}
-	elsif(!$status) {
-		%result = (error=>$result[0]);
+	elsif(ref $exp) {
+		$r = &$exp($html,$url,@data);
 	}
 	else {
-		%result = ($status,@result);
+		$r = eval($exp);
+		if($@) {
+			print STDERR "Error while eval($exp):$@\n";
+		}
 	}
-    if($result{"#use quick parse"}) {
-		%result = MyPlace::URLRule::urlrule_quick_parse(url=>$url,%result);
-    }
-	return MyPlace::URLRule::new_response($url,$rule,\%result);
+	return $r;
 }
 
 sub urlrule_quick_parse {
@@ -419,11 +406,13 @@ sub urlrule_quick_parse {
 		$data_exp,$data_map,
 		$pass_exp,$pass_map,$pass_name_exp,$pass_name_map,
 		$pages_exp,$pages_map,$pages_pre,$pages_suf,$pages_start,$pages_margin,
+		$pages_limit,
 		$charset) = @args{qw/
         title_exp title_map
         data_exp data_map
 		pass_exp pass_map pass_name_exp pass_name_map 
         pages_exp pages_map pages_pre pages_suf pages_start pages_margin
+		pages_limit
         charset
     /};
 
@@ -446,7 +435,7 @@ sub urlrule_quick_parse {
 	}
     elsif($data_exp) {
         while($html =~ m/$data_exp/g) {
-			my $r = eval $data_map;
+			my $r = &exp_runner($data_map,$html,$url,$1,$2,$3,$4,$5,$6,$7,$8,$9);
 			#print STDERR "$data_exp => $data_map => $r\n";
 			next unless($r);
 			next if($h_data{$r});
@@ -460,11 +449,14 @@ sub urlrule_quick_parse {
 	}
     elsif($pass_exp) {
         while($html =~ m/$pass_exp/g) {
-            my $r = eval $pass_map;
+			my $r = &exp_runner($pass_map,$html,$url,$1,$2,$3,$4,$5,$6,$7,$8,$9);
 			next if($h_pass{$r});
             push @pass_data,$r;
 			$h_pass{$r} = 1;
-            push @pass_name,eval $pass_name_map if($pass_name_map);
+			if($pass_name_map) {
+				$r = &exp_runner($pass_name_map,$html,$url,$1,$2,$3,$4,$5,$6,$7,$8,$9);
+				push @pass_name,$r if(defined $r);
+			}	
         }
     }
     elsif($pages_exp) {
@@ -477,6 +469,7 @@ sub urlrule_quick_parse {
 				suffix=>$pages_suf,
 				start=>$pages_start,
 				margin=>$pages_margin,
+				limit=>$pages_limit,
 		);
 		if(!@pass_data) {
 			@pass_data = @{$pages};
@@ -491,13 +484,9 @@ sub urlrule_quick_parse {
     elsif($title_exp) {
         $title_map = '$1' unless($title_map);
         if($html =~ m/$title_exp/) {
-            $title = eval $title_map;
+			$title = &exp_runner($title_map,$html,$url,$1,$2,$3,$4,$5,$6,$7,$8,$9);
         }
     }
-#	use Data::Dumper;die(Dumper(\%h_pass));
-#    @data = delete_dup(@data) if(@data);
-#    @pass_data = delete_dup(@pass_data) if(@pass_data and (!@pass_name));
-	
     return (
         count=>scalar(@data),
         data=>[@data],

@@ -190,6 +190,7 @@ sub aa_process_nextlevel {
 	if($response->{base} and $self->{request}->{buildurl}) {
 		foreach(@{$next{data}}) {
 			#print STDERR $_,"\n";
+			next if(m/^(https?|ftp|magnet|qvod|bdhd|thunder|ed2k|data):/);
 			if(m/^(.+)\s*\t\s*([^\t]+)$/) {
 				$_ = URI->new_abs($1,$response->{base})->as_string . "\t$2"
 			}
@@ -313,6 +314,7 @@ sub autoApply {
 			if($response->{base} and $self->{request}->{buildurl}) {
 				foreach(@{$next{data}}) {
 					#print STDERR $_,"\n";
+					next if(m/^(https?|ftp|magnet|qvod|bdhd|thunder|ed2k|data):/);
 					if(m/^(.+)\s*\t\s*([^\t]+)$/) {
 						$_ = URI->new_abs($1,$response->{base})->as_string . "\t$2"
 					}
@@ -334,10 +336,11 @@ sub autoApply {
 				my $req = {
 					level=>$next{level},
 					action=>$next{action},
-					progress=>($res->{progress} || "") . "[$idx/$count]",
 					url=>$link,
 					title=>$linkname,
 				};
+				$req->{progress} = ($res->{progress} || "");
+				$req->{progress} .= "[$idx/$count]" unless($count == 1);
 				$idx--;
 				push @requests,$req;
 			}
@@ -438,6 +441,7 @@ sub process {
 	return unless($response->{count}>0);
 	if($response->{base} and $self->{request}->{buildurl}) {
 		foreach(@{$response->{data}}) {
+			next if(m/^(https?|ftp|magnet|qvod|bdhd|thunder|ed2k|data):/);
 			if($_ =~ m/^([^\t]+)\t+(.+)$/) {
 				$_ = URI->new_abs($1,$response->{base})->as_string() . "\t$2";
 			}
@@ -460,7 +464,6 @@ sub do_action {
 	my $rule = shift;
 
 	$self->{exitval} = 1;
-
     return undef,"No data" unless($data);
     if(ref $data eq 'SCALAR') {
 		$data = [$data];
@@ -472,26 +475,132 @@ sub do_action {
 	#app_prompt($self->{msghd} . "Directory",short_wd(getcwd,$self->{startwd}),"\n");
 	my $base = $response->{base} || $rule->{base} || $rule->{url};
     my $file=$response->{file};
-    $file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
 	my $action = $response->{pipeto} || $response->{action} || '';
-#    print Data::Dumper->Dump([$response],qw/*response/);
+
+	my %ACTION_MODE;
+	if($action =~ m/^!(.+)$/) {
+		$ACTION_MODE{FORCE} = 1;
+		$action = $1;
+	}
+    if($file) {
+		$file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
+		$action = 'FILE';
+	}
+	elsif(lc($action) =~ m/^file:(.+)$/) {
+		$file = $1;
+		$action = 'FILE';
+	}
+	elsif(lc($action) =~ m/^(?:db|database):(.+)$/) {
+		$file = $1;
+		$action = 'DATABASE';
+	}
+	#print Data::Dumper->Dump([$response],qw/*response/);
 	{
 		$action =~ s/#URLRULE_BASE#/$base/g;
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}
 	$self->{DATAS_COUNT} = $self->{DATAS_COUNT} ? $self->{DATAS_COUNT} + @$data : @$data;
-    if($file) {
-		app_prompt($self->{msghd} . 'Writes file',$file);
-        if (-f $file) {
+	if($action eq 'DOWNLOADER') {
+		my $f_urls='urls.lst';
+		app_prompt($self->{msghd} . "Write data to database",$f_urls,"\n");
+		my %records;
+		if(-f $f_urls) {
+			if(open FI,'<',$f_urls) {
+				foreach(<FI>) {
+					chomp;
+					$records{$_} = 1;
+				}
+				close FI;
+			}
+			else {
+				app_error($self->{msghd} . "Error reading $f_urls:$!\n");
+				return undef;
+			}
+		}
+		my $count = 0;
+		my $OUTDATE = 1;
+		if(open FO,'>>',$f_urls) {
+			foreach(@{$data}) {
+				next if($records{$_});
+				print FO $_,"\n";
+				$OUTDATE = 0;
+				$count++;
+			}
+			close FO;
+			app_prompt($self->{msghd}, "$count lines wrote\n");
+			use MyPlace::Program::Downloader;
+			my $mpd = new MyPlace::Program::Downloader;
+			$mpd->execute(
+				'--input'=>$f_urls,
+				'--title'=>$response->{title},
+				'--retry',
+			);
+			$self->{DATAS_COUNT} = $count;
+			$self->outdated() if($OUTDATE);
+			return $count;
+		}
+		else {
+			app_error($self->{msghd} . "Error writing $f_urls:$!\n");
+			return undef;
+		}
+	}
+	if($action eq 'DATABASE') {
+		my $dbfile = $file || 'urls.lst';
+		app_prompt($self->{msghd} . "Write data to database",$dbfile,"\n");
+		my %records;
+		if(-f $dbfile) {
+			if(open FI,'<',$dbfile) {
+				foreach(<FI>) {
+					chomp;
+					$records{$_} = 1;
+				}
+				close FI;
+			}
+			else {
+				app_error($self->{msghd} . "Error reading $dbfile:$!\n");
+				return undef;
+			}
+		}
+		my $count = 0;
+		my $OUTDATE = 1;
+		my $idx = 0;
+		if(open FO,'>>',$dbfile) {
+			foreach(@{$data}) {
+				if($records{$_}) {
+					next;
+				}
+				$idx++;
+				print STDERR "[$idx] $_\n";
+				print FO $_,"\n";
+				$OUTDATE = 0;
+				$count++;
+			}
+			close FO;
+			app_prompt($self->{msghd} . "Write $count lines to",$dbfile,"\n");
+			$self->{DATAS_COUNT} = $count;
+			#$self->{DATAS_COUNT} - @$data + @KEEPS;
+			if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
+				$self->outdated();
+			}
+			return $count;
+		}
+		else {
+			app_error($self->{msghd} . "Error writing $dbfile:$!\n");
+			return undef;
+		}
+	}
+    elsif($action eq 'FILE') {
+		app_prompt($self->{msghd} . 'Writes file',$file,"\n");
+		if (-f $file) {
 			print STDERR colored('RED',"Ingored (File exists)...\n");
 			return undef;
-        }
-        else {
-            open FO,">:utf8",$file or die("$!\n");
+		}
+		else {
+            open FO,">",$file or die("$!\n");
             print FO @{$data};
             close FO;
 			print STDERR "[OK]\n"	
-        }
+		}
     }
     elsif($response->{hook}) {
 		my $name = $response->{hook}->[0];
@@ -517,13 +626,24 @@ sub do_action {
 		if(!$PROGRAM_SAVE) {
 			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
 			$PROGRAM_SAVE->setOptions("--history","--referer",$base) if($base);
+			$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
+		}
+		$PROGRAM_SAVE->addTask(@{$data});
+		$PROGRAM_SAVE->execute();
+	}
+	elsif($action eq '!SAVE') {
+		app_prompt($self->{msghd} . 'Action',"$action\n");
+		if(!$PROGRAM_SAVE) {
+			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
+			$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
+			$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
 		}
 		$PROGRAM_SAVE->addTask(@{$data});
 		$PROGRAM_SAVE->execute();
 	}
 	elsif($action eq 'UPDATE') {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-		my $OUTDATE = undef;
+		my $OUTDATE = 1;
 		my @RECORDS;
 		if(open FI, '<',"URLS.txt") {
 			foreach(<FI>) {
@@ -538,36 +658,30 @@ sub do_action {
 			my $link = $_;
 			$link =~ s/\t.+$//;
 			foreach my $rec(@RECORDS) {
-				if($link eq $rec) {
-					$OUTDATE = 1;
-					last;
-				}
-			}
-			if($OUTDATE) {
-				last;
-			}
-			else {
+				next if($link eq $rec);
 				push @KEEPS,$_;
+				$OUTDATE = 0;
 			}
 		}
 		if(@KEEPS) {
 			if(!$PROGRAM_SAVE) {
 				$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
-				$PROGRAM_SAVE->setOptions("--history","--referer",$base) if($base);
+				$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
+				$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
 			}
 			$PROGRAM_SAVE->addTask(@KEEPS);
 			$PROGRAM_SAVE->execute();
-			#if(open FO,">>","URLS.txt") {
-			#	print FO join("\n",@KEEPS),"\n";
-			#	close FO;
-			#}
+			if(open FO,">>","URLS.txt") {
+				print FO join("\n",@KEEPS),"\n";
+				close FO;
+			}
 		}
 		$self->{DATAS_COUNT} = $self->{DATAS_COUNT} - @$data + @KEEPS;
 		$self->outdated() if($OUTDATE);
 	}
     elsif($action) {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-        my $childpid = open FO,"|-:utf8",$action;
+        my $childpid = open FO,"|-",$action;
 #		print STDERR "Childpid:$childpid\n";
 		if($childpid) {
 			print FO join("\n",@{$data}),"\n";

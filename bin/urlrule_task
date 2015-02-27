@@ -43,8 +43,8 @@ GetOptions(\%OPTS,@OPTIONS);
 
 my $phnd;
 my $TASK_LOGGING    = 1;
-my $TASK_DATABASE_NAME   = $OPTS{"database"} || "DATABASE.URL";
-my $HOST_DATABASE_NAME = $OPTS{"hosts"} || "HOSTS.URL";
+my $TASK_DATABASE_NAME   = $OPTS{"database"} || "DATABASE.ud";
+my $HOST_DATABASE_NAME = $OPTS{"hosts"} || "HOSTS.ud";
 my $NAMES_DATABASE = "NAMES.db";
 my @CONFIG_INC = (
 	File::Spec->curdir,
@@ -190,6 +190,16 @@ sub process_passdown_task {
     #print Data::Dumper->Dump([$res],['*res']);
 	$phnd->push(getcwd,'load_rule',@{$res}{qw/title url level action/});
 }
+sub execute_rule {
+    my $CWD = getcwd;
+	return if(ignore_this(@_));
+	my ($dir,$url,$level,$action) = @_;
+	my @prog = (qw/urlrule_action/);
+	push @prog,"--directory",$dir if($dir);
+	push @prog,$url,$level,$action;
+	system(@prog);
+    chdir $CWD;
+}
 sub load_rule {
     my $CWD = getcwd;
 	return if(ignore_this(@_));
@@ -318,53 +328,8 @@ sub action_DUMP {
     }
 }
 sub action_DOWNLOAD {
-    my $task = shift;
-    my($name,$id,$host,$url,$level,$path) = @{$task};
-    my $hostname;
-    if($host =~ /^[^\|]+\|(.+)$/)
-    {
-        $hostname = $1;
-    }
-    elsif($host =~ m/^#(.+)$/) {
-        app_message("$name/$1 = \'$id\'\n");
-        return 1;
-    }
-    else
-    {
-        $hostname = $host;
-    }
-	#my $prop_urlhist = undef;
-	if($path) {
-	    my $Database = MyPlace::Config->new();
-		$Database->read_plainfile($TASK_DATABASE);
-	    $Database->propset(NOW,$path->[0],$path->[1],$path->[2],"last");
-		app_message("Saving database ...\n");
-	    $Database->write_plainfile($TASK_DATABASE);
-	}
-    if(! -d "$name")
-    {
-#        app_message("Create directory: $name\n");
-        mkdir $name;
-    }
-    if(! -d "$name/$hostname") 
-    {
-#        app_message("Create directory: $name/$hostname\n");
-        mkdir "$name/$hostname";
-    }
-    if(! -d "$name/$hostname") 
-    {
-        app_error("Can't access $name/$hostname!\n");
-        return undef;
-    }
-	my $topdir = File::Spec->rel2abs("$name/$hostname");
-	$URLRULE->{'UTASK'}->{topdir} = "$topdir";
-	$URLHIST{$topdir} = new MyPlace::UniqueList(
-		file=>File::Spec->catfile($topdir,'URLS.txt'),
-		itemName=>'URL',
-		itemsName=>'URLs',
-		autoAdd=>1,
-		message=>1
-	) unless($URLHIST{$topdir} || $OPTS{'no-urlhist'});
+	my ($name,$hostname,$url,$level,$host) = _preprocess(@_);
+	return unless($name);
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
 	my $dl = $S_DOWNLOADER . ' -r \'#URLRULE_BASE#\'';
@@ -381,7 +346,8 @@ sub action_DOWNLOAD {
 #	save_urlhist("$name/$hostname");
     return 1;
 }
-sub action_SAVE {
+
+sub _preprocess {
     my $task = shift;
     my($name,$id,$host,$url,$level,$path) = @{$task};
     my $hostname;
@@ -391,13 +357,12 @@ sub action_SAVE {
     }
     elsif($host =~ m/^#(.+)$/) {
         app_message("$name/$1 = \'$id\'\n");
-        return 1;
+        return undef;
     }
     else
     {
         $hostname = $host;
     }
-	#my $prop_urlhist = undef;
 	if($path) {
 	    my $Database = MyPlace::Config->new();
 		$Database->read_plainfile($TASK_DATABASE);
@@ -430,11 +395,36 @@ sub action_SAVE {
 		autoAdd=>1,
 		message=>1
 	) unless($URLHIST{$topdir} || $OPTS{'no-urlhist'});
+	
+	return $name,$hostname,$url,$level,$host;
+
+}
+sub action_DOWNLOADER {
+	my ($name,$hostname,$url,$level,$host) = _preprocess(@_);
+	return unless($name);
+    app_message("Processing $name/$host\n");
+    &log("DOWNLOAD - $name/$host $url\[$level\]");
+    execute_rule("$name/$hostname",$url,$level,'DATABASE');
+	use MyPlace::Program::Downloader;
+	my $MD = new MyPlace::Program::Downloader;
+	$MD->execute(
+		'--directory',"$name/$hostname",
+		'--recursive',
+		'--input','urls.lst',
+	);
+    return 1;
+}
+
+sub action_SAVE {
+	my ($name,$hostname,$url,$level,$host) = _preprocess(@_);
+	return unless($name);
     app_message("Processing $name/$host\n");
     &log("DOWNLOAD - $name/$host $url\[$level\]");
     load_rule("$name/$hostname",$url,$level,'SAVE');
     return 1;
 }
+
+
 sub action_FEED {
     my $task = shift;
     my($name,$id,$host,$url,$level) = @{$task};
@@ -482,7 +472,7 @@ sub action_FEED {
     return 1;
 }
 sub log {
-    open $TASK_FILEHANDLE_LOG,">>:utf8",TASK_FILE_LOG;
+    open $TASK_FILEHANDLE_LOG,">>",TASK_FILE_LOG;
     print $TASK_FILEHANDLE_LOG NOW,": ",@_,"\n" if(@_);
     close $TASK_FILEHANDLE_LOG;
 }
@@ -532,6 +522,8 @@ if(@ARGV) {
     }
 	elsif($action eq 'SAVE') {
 	}
+	elsif($action eq 'DOWNLOADER') {
+	}
     else {
         $query = $action;
         $action = 'ECHO';
@@ -569,7 +561,7 @@ if(@ARGV) {
 	}
     my @records = $Database->get_records(@targets);
     my @tasks = convert_records($Hosts,\@records);
-    if($action eq 'DOWNLOAD' || $action eq 'SAVE') {
+    if($action eq 'DOWNLOAD' || $action eq 'SAVE' || $action eq 'DOWNLOADER') {
         &init_task;
 		foreach(@queries) {
 			&log($action," - ",$_);

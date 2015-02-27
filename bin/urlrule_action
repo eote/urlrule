@@ -131,6 +131,8 @@ sub getcwd {
     verbose|v:i
 	no-history|nh
 	test|t:i
+	prompt|p:s
+	directory|d=s
 /;
 if(@ARGV) {
 	require Getopt::Long;
@@ -148,7 +150,7 @@ if($OPTS{'help'} or $OPTS{'manual'}) {
 $CONF = MyPlace::URLRule::Config->new();
 $PROGRAM = $CONF->resume();
 if(@ARGV) {
-    $PROGRAM->push($CWD,'load_rule',undef,@ARGV);
+    $PROGRAM->push($CWD,'load_rule',$OPTS{directory},@ARGV);
 }
 else {
     $PROGRAM->loadFromFile();
@@ -167,7 +169,7 @@ else {
 			chomp;
 			my $line = shift;
 			my @args = split($line,"\t");
-			$PROGRAM->push($CWD,'load_rule',undef,@args);
+			$PROGRAM->push('load_rule',undef,@args);
 		}
 	}
 }
@@ -178,7 +180,7 @@ $RULE = new MyPlace::URLRule::OO(
 );
 my $appname = $0;
 $appname =~ s/^.+\///;
-$MSG = MyPlace::Script::Message->new($appname);
+$MSG = MyPlace::Script::Message->new($appname . ($OPTS{prompt} ? " [$OPTS{prompt}] " : ''));
 $CWD = getcwd();
 
 if($OPTS{test}) {

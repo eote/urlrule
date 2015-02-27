@@ -22,11 +22,17 @@ eval('require ListSource;');
 
 
 my @LIST_TEMP;
+my %LIST_NAMES;
 sub list_incoming {
 	my $handler = shift;
 	my $res = shift;
 	my $rule = shift;
-	push @LIST_TEMP,@{$res->{data}};
+	if($res->{data} && @{$res->{data}}) {
+		foreach(@{$res->{data}}) {
+			push @LIST_TEMP,$_ unless($LIST_NAMES{$_});
+			$LIST_NAMES{$_} = 1;
+		}
+	}
 	return $res->{data};
 }
 sub load_list {
@@ -74,7 +80,8 @@ sub query_list {
 
 my @OPTIONS = qw/
 	help|h
-	write|w:s
+	save|s
+	output|o:s
 /;
 my %OPTS;
 GetOptions(\%OPTS,@OPTIONS);
@@ -82,10 +89,10 @@ if($OPTS{help}) {
 	app_message <<"USAGE";
 	$0 - Lists  downloader
 	Usage:
-		$0 [--write] [queries|URLs]
+		$0 [--save] [--output filename] [queries|URLs]
 	Synopsis:
-		$0 -w Japan
-		$0 -w http://en.wikipedia.org/wiki/AVN_Best_New_Starlet_Award
+		$0 -s Japan
+		$0 -s -o whatever.txt http://en.wikipedia.org/wiki/AVN_Best_New_Starlet_Award
 		$0 http://en.wikipedia.org/wiki/AVN_Best_New_Starlet_Award
 USAGE
 	exit 1;
@@ -94,69 +101,93 @@ USAGE
 
 my %stars_list = %{&load_list};
 my $IGNORE_EXP = qr/$stars_list{'#IGNORE_EXP#'}/ if($stars_list{'#IGNORE_EXP#'});
-my @query = @ARGV;
-@query = keys %stars_list unless(@query);
+my @query;
+if(@ARGV) {
+	foreach(@ARGV) {
+		if(m/^\/(.+)\/$/) {
+			my $exp = $1;
+			foreach my $key (keys %stars_list) {
+				if($key =~ m/$exp/) {
+					push @query,$key;
+				}
+			}
+		}
+		else {
+			push @query,$_;
+		}
+	}
+}
+else {
+	@query = keys %stars_list;
+}
 my %stars;
 my $F_lm;
-foreach(@query) {
-	my $level = 0;
-	if(m/^(.+)\|(\d+)$/) {
-		$_ = $1;
+foreach my $query (@query) {
+	my $title = $query;
+	my $url = $query;
+	my $level=0;
+	$query = uri_unescape($query);
+	if($query =~ m/^(.+)\|(\d+)$/) {
+		$url = $1;
 		$level = $2;
 	}
-	my %names;
-	app_message "Fetching [$_]\n";
-	my @url;
-	if(!$stars_list{$_}) {
-		push @url,$_;
-		$_ = uri_unescape($_);
-		s/[\/:]+$//;
-		s/^.*[\/:]+//;
-		$_ = $url[0] unless($_);
+	my @urls;
+	my @names;
+	app_message "Processing list [$query]\n";
+	if(!$stars_list{$query}) {
+		#Treat query as a new url
+		push @urls,"$url|$level";
+		$title = $url;
+		$title =~ s/[\/:]+$//;
+		$title =~ s/^.*[\/:]+//;
+		$title = $url unless($title);
 		my $F_dup = 0;
-		if($stars_list{$_}) {
-			foreach(@{$stars_list{$_}}) {
-				if($_ eq $url[0]) {
+		if($stars_list{$title}) {
+			foreach (@{$stars_list{$title}}) {
+				if($_ eq "$url|$level") {
 					$F_dup = 1;
 					last;
 				}
 			}
 			if(!$F_dup) {
 				$F_lm = 1;
-				push @{$stars_list{$_}},"$url[0]|$level";
+				push @{$stars_list{$title}},"$url|$level";
 			}
 		}
 		else {
-			$stars_list{$_} = ["$url[0]|$level"];
+			$stars_list{$title} = ["$url|$level"];
 			$F_lm = 1;
 		}
 	}
 	else {
-		@url = @{$stars_list{$_}};
+		@urls = @{$stars_list{$query}};
 	}
-	my $OUTPUT = "$_.txt";
-	if(defined $OPTS{write}) {
-		$OUTPUT = $OPTS{write} if(length($OPTS{write})>0);
+	my $OUTPUT = $OPTS{output} || "$title.txt";
+	if(defined $OPTS{save}) {
 		app_message "Open $OUTPUT for writting...\n";
 		open FO,">",$OUTPUT or die("$!\n");
 	}
 	else {
 		open FO,">&STDOUT";
 	}
-	foreach(@url) {
-		app_message "Source: ",uri_unescape($_),"\n";
+	foreach(@urls) {
+		app_message "Source: ",$_,"\n";
+		if(m/^(.+)\|(\d+)$/) {
+			$_ = $1;
+			$level = $2;
+		}
 		foreach(query_list($_,$level)) {
 			next if($IGNORE_EXP and $_ =~ $IGNORE_EXP);
 			if(m/^(\d+)\.(.+)$/) {
 				$_ = strnum($1) . ".$2";
 			}
-			$names{$_} = 1;
+			push @names,$_;
 		}
 	}
-	$stars{$_} = [sort keys %names];
-	print FO join("\n",@{$stars{$_}}),"\n";
+	$stars{$title} = [@names];
+	print FO join("\n",@{$stars{$title}}),"\n";
 	close FO;
-	app_message scalar(@{$stars{$_}}), $OPTS{write} ? " items saved in $OUTPUT.\n" : " items [OK]\n";
+	app_message scalar(@{$stars{$title}}), $OPTS{save} ? " items saved in $OUTPUT.\n" : " items [OK]\n";
 }
 if($F_lm) {
 	app_message "Saving list to ListSource.pm...";

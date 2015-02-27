@@ -48,7 +48,13 @@ set_callback('apply_rule',sub {
 });
 my $url = shift;
 my $level = shift;
-if($level && $level !~ /^\d+$/) {
+if(!$level) {
+	$level = 0;
+}
+elsif($level =~ m/^:(.+)$/) {
+	$level = ":$1";
+}
+elsif($level !~ /^\d+$/) {
 	unshift @ARGV,$level;
 	$level = 0;
 }

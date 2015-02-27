@@ -8,7 +8,7 @@ if($action and $action =~ /^(?:DOWNLOAD|DUMP|ECHO)$/) {
         exit 0;
 }
 
-my $TASK_DATABASE   = "DATABASE.URL";
+my $TASK_DATABASE   = "DATABASE.ud";
 open FO,">>","urlrule_database.log";
 print FO now,": urlrule_database ",(map "\"$_\" ",@ARGV),"\n";
 close FO;

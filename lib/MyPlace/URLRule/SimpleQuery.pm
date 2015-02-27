@@ -4,15 +4,23 @@ use strict;
 use warnings;
 use MyPlace::URLRule;
 use MyPlace::SimpleQuery;
+our $SQ_DATABASE_LIST = "weibo.com,weipai.cn,vlook.cn,google.search.image,miaopai.com,blog.sina.com.cn,meipai.com";
 
 
 sub load_db {
 	my $self = shift;
 	my $dbname = shift;
-	my @options;
+	my @options = @_;
 	if(ref $dbname) {
 		($dbname,@options) = @$dbname;
 	}
+	elsif($dbname eq '*') {
+		foreach(split(',',$SQ_DATABASE_LIST)) {
+			$self->load_db($_,@options);
+		}
+		return;
+	}
+
 	my $dbfile = $dbname;
 	foreach my $basename ($dbname, uc($dbname), $dbname . ".sq", uc($dbname) . ".sq") {
 		if(-f $basename) {
@@ -48,6 +56,16 @@ sub load_db {
 	return $db;
 }
 
+sub dbfiles {
+	my $self = shift;
+	return unless($self->{dbinfo});
+	my @files;
+	foreach(keys %{$self->{dbinfo}}) {
+		push @files,$self->{dbinfo}->{$_};
+	}
+	return @files;
+}
+
 sub get_dbinfo {
 	my $self = shift;
 	my $info = $self->{dbinfo};
@@ -57,10 +75,8 @@ sub get_dbinfo {
 sub new {
 	my $class = shift;
 	my $self = bless {},$class;
-	if(@_) {
-		foreach(@_) {
-			$self->load_db($_);
-		}
+	foreach(@_) {
+		$self->load_db($_);
 	}
 	return $self;
 }
@@ -74,14 +90,14 @@ sub additem {
 			my ($count,$msg) = $self->{db}->{$dbname}->additem(@_);
 			if($count) {
 				$total += $count;
-				print STDERR "$count Id add to [database:$dbname]\n";
+				#print STDERR "$count Id add to [database:$dbname]\n";
 			}
 			else {
 				push @error,"[database:$dbname] $msg";
 			}
 		}
 		if(@error) {
-			print STDERR join("\n",@error),"\n";
+			#print STDERR join("\n",@error),"\n";
 		}
 		return $total,join("\n",@error);
 	}
@@ -98,14 +114,14 @@ sub add {
 			my ($count,$msg) = $self->{db}->{$dbname}->add(@_);
 			if($count) {
 				$total += $count;
-				print STDERR "$count Id add to [database:$dbname]\n";
+				#print STDERR "$count Id add to [database:$dbname]\n";
 			}
 			else {
 				push @error,"[database:$dbname] $msg";
 			}
 		}
 		if(@error) {
-			print STDERR join("\n",@error),"\n";
+			#print STDERR join("\n",@error),"\n";
 		}
 		return $total,join("\n",@error);
 	}
