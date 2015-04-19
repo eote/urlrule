@@ -35,11 +35,9 @@ sub OPTIONS {qw/
 	write|w
 	disable=s@
 	input|i=s
+	follow
+	reposter
 /;}
-
-
-
-
 
 
 sub p_out {
@@ -82,7 +80,9 @@ sub DB_INIT {
 	if(defined($OPTS{hosts})) {
 		$self->{USQ} = MyPlace::URLRule::SimpleQuery->new();
 		my @opts  = ('overwrite'=>1) if($OPTS{overwrite});
-		$self->{USQ}->load_db($OPTS{hosts},@opts);
+		foreach my $host (split(/\s*,\s*/,$OPTS{hosts})) {
+			$self->{USQ}->load_db($host,@opts);
+		}
 	}
 	if(defined($OPTS{database})) {
 		$self->{DB} = [MyPlace::URLRule::Database->new()];
@@ -118,7 +118,6 @@ sub query {
 			level=>(shift(@_) || 0),
 			title=>(shift(@_) || ""),
 		}
-
 	}
 	my @queries;
 	my $q = shift(@_);
@@ -170,7 +169,7 @@ sub query {
 		}
 	}
 	if(!@target) {
-		p_err "Query \"@_\" match nothing!\n";
+		p_err "Query \"@queries\" match nothing!\n";
 	}
 	return @target;
 }
@@ -233,7 +232,7 @@ sub CMD_ACTION {
 		$count++;
 	}
 	my $idx = 0;
-	my $URLRULE = new MyPlace::URLRule::OO('action'=>$cmd,'thread'=>$OPTS{thread});
+	my $URLRULE = new MyPlace::URLRule::OO('action'=>$cmd,'thread'=>$OPTS{thread},'force'=>$OPTS{force});
 	foreach(@request) {
 		$idx++;
 		$_->{progress} = "[$idx/$count]";
@@ -421,6 +420,46 @@ sub CMD_DUMP {
 	return $EXIT_CODE{OK};
 }
 
+my %URL_EXPS = (
+	'mm\.taobao\.com'=>[
+		'mm\.taobao\.com\/([^#&?]+)',
+		'$1',undef,'mm.taobao.com',
+	],
+	'(?:www\.)moko\.cc'=>[
+		'(?:www\.)moko\.cc\/([^\/]+)',
+		'$1',undef,'moko.cc',
+	],
+);
+
+sub parse_url {
+	my $url = shift;
+	
+	my %result;
+	foreach my $site(keys %URL_EXPS) {
+		next unless($url =~ m/^https?:\/\/$site|^$site/);
+		my($exp,$r1,$r2,$r3) = @{$URL_EXPS{$site}};
+		next unless($exp);
+		if($url =~ m/$exp/) {
+			$result{profile} = eval("\"$r1\"") if($r1);
+			$result{uname} = eval("\"$r2\"") if($r2);
+			$result{host} = eval("\"$r3\"") if($r3);
+			last;
+		}
+	}
+	return 1,\%result if(%result);
+	if($url =~ m/^http/) {
+		require MyPlace::URLRule;
+		my $rule = MyPlace::URLRule::parse_rule($url,":info");
+		my ($status,$result) = apply_rule($rule);
+		if($status and $result->{profile}) {
+			return 1,$result;
+		}
+		else {
+			return 0,"Error: failed extract information from URL <$url>";
+		}
+	}
+	return 1,\%result;
+}
 
 sub CMD_ADD {
 	my $self = shift;
@@ -430,21 +469,50 @@ sub CMD_ADD {
 	my $host = shift(@_) || $OPTS->{hosts} || $OPTS->{db};
 	my $exitval = 0;
 
-
-	if($id =~ m/^http/) {
-		require MyPlace::URLRule;
-		my $rule = MyPlace::URLRule::parse_rule($id,":info");
-		my ($status,$result) = apply_rule($rule);
-		if($status and $result->{profile}) {
+	if(!$id) {
+		$id = $name;
+		$name = '';
+	}
+	my ($r,$result) = parse_url($id);
+	if($r) {
+		if($result->{profile}) {
 			p_msg "ID => $result->{profile}\n";
 			$id = $result->{profile};
-			$host = $result->{host} unless($host);
-			$OPTS->{hosts} = $host unless($OPTS->{hosts});
 		}
+		if($result->{uname} and !$name) {
+			p_msg "NAME => $result->{uname}\n";
+			$name = $result->{uname};
+		}
+		if($result->{host} and !$host) {
+			p_msg "HOST => $result->{host}\n";
+			$host = $result->{host};
+			$OPTS->{hosts} = $host if(!$OPTS->{hosts});
+		}
+	}
+	else {
+		die($result . "\n");
 	}
 
 	if(defined $OPTS->{hosts}	or defined $OPTS->{all}) {
 		$OPTS->{hosts} = $host if($host);
+	}
+	if(!defined $OPTS->{hosts}) {
+		die("Error <HOSTS> not defined\n");
+	}
+	if($OPTS->{follow}) {
+		my @hosts;
+		foreach my $hostname (split(/\s*,\s*/,$OPTS->{hosts})) {
+			push @hosts,$hostname;
+			my $f = "sites/$hostname/follows.txt";
+			foreach($f,"follows/$hostname/follows.txt") {
+				$f = $_ if(-f $_);
+			}
+			push @hosts,$f;
+		}
+		$OPTS->{hosts} = join(",",@hosts);
+	}
+	if($OPTS->{reposter}) {
+		$name = '#Reposter/' . $name if($name);
 	}
 	$self->DB_INIT();
 
@@ -455,8 +523,7 @@ sub CMD_ADD {
 		 if($count) {
 			 $self->{USQ}->save();
 		 }
-		 $exitval = $count > 0 ? 0 : 1;
-
+		 $exitval = $count > 0 ? $self->EXIT_CODE('OK') : $self->EXIT_CODE('IGNORED');
 	}
 	if($self->{DB} and @{$self->{DB}}) {
 		foreach my $USD (@{$self->{DB}}) {
@@ -578,7 +645,7 @@ sub MAIN {
 		my @files = $self->dbfiles;
 		return $self->CMD_SED(\@_,@files);
 	}
-
+#	print STDERR join(", ",@queries);
 	my @target = $self->query(@queries);
 	if(!@target) {
 		p_msg "Nothing to do\n";

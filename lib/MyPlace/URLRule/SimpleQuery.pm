@@ -4,8 +4,9 @@ use strict;
 use warnings;
 use MyPlace::URLRule;
 use MyPlace::SimpleQuery;
-our $SQ_DATABASE_LIST = "weibo.com,weipai.cn,vlook.cn,google.search.image,miaopai.com,blog.sina.com.cn,meipai.com";
+our $SQ_DATABASE_LIST = "weibo.com,weipai.cn,vlook.cn,google.search.image,miaopai.com,blog.sina.com.cn,meipai.com,weishi.com";
 
+our @SQ_DATABASE_ALL;
 
 sub load_db {
 	my $self = shift;
@@ -15,7 +16,16 @@ sub load_db {
 		($dbname,@options) = @$dbname;
 	}
 	elsif($dbname eq '*') {
-		foreach(split(',',$SQ_DATABASE_LIST)) {
+		@SQ_DATABASE_ALL = ();	
+		foreach my $pdir (@MyPlace::URLRule::URLRULE_LIB) {
+			next unless(-d $pdir);
+			foreach my $dir(glob("$pdir/sites/*/")) {
+				if(-d $dir and $dir =~ m/([^\/]+)\/$/) {
+					push @SQ_DATABASE_ALL,$1;
+				}
+			}
+		}
+		foreach(@SQ_DATABASE_ALL) {
 			$self->load_db($_,@options);
 		}
 		return;

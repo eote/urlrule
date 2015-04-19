@@ -28,15 +28,15 @@ my $urlrule_action = `which urlrule_action`;
 chomp($urlrule_action);
 die("Error: Program \"urlrule_action\" not found\n") unless(-f $urlrule_action);
 if(@ARGV) {
-	my $saveurl = "SAVE";
+	my $saveurl = "DOWNLOADER";
 	my $url = shift;
 	die("Usage $0 <URL> [LEVEL]\n") unless($url);
 	my $level = shift;
 	$level = 0 unless($level);
 	@ARGV=($url,$level,$saveurl);
 }
-if($OPTS{"no-history"}) {
-	push @ARGV,"--no-history";
+if($OPTS{"history"}) {
+	push @ARGV,"--history";
 }
 push @ARGV,"--test",$OPTS{test} if($OPTS{test});
 eval `cat "$urlrule_action"`;

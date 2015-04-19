@@ -59,7 +59,7 @@ sub load_rule {
 		$MSG->message("Ignored: $rep\n");
 		goto END_LOAD_RULE;
 	}
-	if(!$OPTS{"no-history"}) {
+	if($OPTS{"history"}) {
 		if($action && (!$level)) {
 			if($HISTORY->check($url)) {
 				$MSG->message("Ignored, URL'd been processed. $url\n");
@@ -82,7 +82,7 @@ sub load_rule {
 		goto END_LOAD_RULE;
 	}
 	$retry = 0;
-	if(!$OPTS{"no-history"}) {
+	if($OPTS{"history"}) {
 		#THIS IS BUGGY, Because $status not always return mearningful value.
 		#ESPECIALLY when pass data to child program
 		if($status && (!$level)) {
@@ -96,7 +96,7 @@ END_LOAD_RULE:
 
 sub sig_killed {
 	delete $SIG{INT};
-	if(!$OPTS{"no-history"}) {
+	if($OPTS{"history"}) {
 		$HISTORY->write();
 	}
     $MSG->message("Saving remained tasks...\n");
@@ -129,10 +129,12 @@ sub getcwd {
 	help|h|? 
 	manual|man
     verbose|v:i
-	no-history|nh
+	history
 	test|t:i
 	prompt|p:s
 	directory|d=s
+	fullname
+	thread
 /;
 if(@ARGV) {
 	require Getopt::Long;
@@ -177,6 +179,10 @@ $RULE = new MyPlace::URLRule::OO(
 		buildurl=>1,
 		createdir=>1,
 		callback_nextlevels=>\&process_passdown,
+		thread=>$OPTS{thread},
+		options=>{
+			fullname=>$OPTS{fullname},
+		},
 );
 my $appname = $0;
 $appname =~ s/^.+\///;
@@ -184,11 +190,11 @@ $MSG = MyPlace::Script::Message->new($appname . ($OPTS{prompt} ? " [$OPTS{prompt
 $CWD = getcwd();
 
 if($OPTS{test}) {
-	$OPTS{'no-history'} = 1;
+	$OPTS{'history'} = 0;
 	$RULE->{request}->{AfterApplyRule} = \&after_apply_rule;
 }
 
-if(!$OPTS{'no-history'}) {
+if($OPTS{'history'}) {
 	$HISTORY = $CONF->history;
 	$HISTORY->load();
 }
@@ -209,7 +215,7 @@ while(my $tasks = $PROGRAM->length) {
 	}
 }
 $MSG->message("All tasks completed.\n");
-if(!$OPTS{"no-history"}) {
+if($OPTS{"history"}) {
 	$HISTORY->save_last();
 	$HISTORY->write();
 }

@@ -19,7 +19,7 @@ BEGIN {
 	$VERSION = 'v2.0';
     @ISA            = qw(Exporter);
 	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback get_rule_handler/;
-    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &urlrule_quick_parse &parse_rule &apply_rule &get_domain &get_rule_dir set_callback get_rule_handler);
+    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &urlrule_quick_parse &parse_rule &apply_rule &get_domain &get_rule_dir set_callback get_rule_handler &locate_file);
 }
 
 #my $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
@@ -44,6 +44,7 @@ sub get_domain($) {
     my $url = shift;
 	$url =~ s/^.*?:\/+//g;
 	$url =~ s/\/.*//g;
+	$url =~ s/:\d+$//;
 	return $url;
     if($url =~ /([^\.\/]+\.[^\.\/]+)\//) {
         return $1;
@@ -159,6 +160,7 @@ sub parse_rule {
     $r{domain} = get_domain($r{url}) unless($r{domain});
     $r{action} = shift;
     $r{action} = "" unless($r{action});
+
     @{$r{args}} = @_;
     my $domain = $r{domain};
 	$r{directory} = $r{level} unless($r{directory});
@@ -311,6 +313,7 @@ sub get_rule_handler {
 			my $url = shift(@_);
 			my $level = shift(@_);
 			my $info = MyPlace::URLRule::parse_rule($url,$level,@_);
+			$info->{options} = $self->{options};
 			my ($status,@result) = apply_rule($url,$info);
 			my %result;
 			if(!@result) {
@@ -357,7 +360,8 @@ sub get_rule_handler {
 	package MyPlace::URLRule;
 	my $rule = bless {
 			source=>$source,
-			package=>$package
+			package=>$package,
+			rule=>$info,
 		},$package;
 	$CACHED_RULE{$id} = $rule;
 	return $rule;
@@ -369,6 +373,10 @@ sub apply_rule {
         return undef,"Invalid rule, could not apply!";
     }
 	my $handler = get_rule_handler($rule);
+	if($handler->{error}) {
+		print STDERR $handler->{error},"\n";
+		return 0;
+	}
 	return $handler->apply($rule->{url},$rule->{level},$rule->{action});
 }
 

@@ -73,21 +73,19 @@ sub error {
 	}
 }
 
-if(!$status) {
-	error($result);
-	exit 1;
-}
 if(!$result) {
 	error("Empty response");
 	exit 2;
 }
-if(!ref $result) {
-	print $result,"\n";
-	exit 0;
-}
-if($result->{error}) {
-	error($result->{error});
-	exit 3;
+elsif(!ref $result) {
+	if(!$status) {
+		error($result);
+		exit 1;
+	}
+	else {
+		print 'result = ',$result,"\n";
+		exit 0;
+	}
 }
 
 my $INDENT="    ";
