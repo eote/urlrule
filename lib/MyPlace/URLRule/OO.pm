@@ -46,6 +46,7 @@ sub reset {
 	foreach (qw/msghd response outdated callback_called exitval/){;
 		delete $self->{$_};
 	}
+	$self->{levels} = {};
 	return $self;
 }
 
@@ -62,6 +63,7 @@ sub new {
 		require URI;
 	}
 	$self->{startwd} = getcwd();
+	$self->{levels} = {};
 	$self = bless $self,$class;
 	MyPlace::URLRule::set_callback(
 		'apply_rule',
@@ -74,6 +76,7 @@ sub new {
 sub _safe_path {
 	foreach(@_) {
 		next unless($_);
+		s/[\<\?*\:\"\|\>]+/_/;
 		s/^\.+//g;
 		s/:/ - /g;
 		#s/[\/\\\?\*]/_/g;
@@ -88,11 +91,29 @@ sub _safe_path {
 	}
 }
 
+sub progress {
+	my $self = shift;
+	my $text = "";
+	foreach my $idx(reverse 0 .. 100) {
+		if($self->{levels}->{"count" . $idx}) {
+			$text  = $text . "[" . 
+				$self->{levels}->{"done" . $idx} .
+				"/" .
+				$self->{levels}->{"count" . $idx} .
+				"]";
+
+		}
+	}
+	return $text;
+}
+
 sub apply{
 	my $self = shift;
 	my $request = shift;
 	my $rule;
 	($rule,$request) = $self->request($request,@_);
+	$self->{levels}->{"count" . $rule->{level}} ||= 0;
+	$self->{levels}->{"count" . $rule->{level}} += 1;
 	return $self->applyRule($rule,$request);
 }
 
@@ -117,6 +138,9 @@ sub applyRule {
 	my $handler = get_rule_handler($rule);
 	if(!$handler) {
 		return 0,{error=>"No handler found for $rule->{url}"},$rule;
+	}
+	if($request->{options}) {
+		$handler->{options} = $request->{options};
 	}
 	if($self->{request}->{BeforeApplyRule}) {
 		$self->{request}->{BeforeApplyRule}($rule,$request,$handler);
@@ -144,10 +168,9 @@ sub aa_apply_rule {
 	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
 	if($self->{request}->{createdir} && $res->{title}) {
 		my $wd = _safe_path($res->{title});
-		if(! -d $wd) {
-			$self->makedir($wd) or die("$!\n");
+		if(!$self->make_change_dir($wd,'aa_apply_rule')) {
+			return undef;
 		}
-		$self->changedir($wd,'autoApply request') or die("$!\n");
 	}
 	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
     app_prompt($self->{msghd} . "Directory",short_wd(getcwd,$self->{startwd}),"\n");
@@ -253,19 +276,21 @@ sub autoApply2 {
 
 sub autoApply {
 	my $self = shift;
-	return 2 if($self->{outdated});
 	my $DIR_KEEP = getcwd;
+	my @DATAS;
 	my ($rule,$res) = $self->request(@_);
-	$self->{msghd} = ($res->{progress} || '') . "[L$rule->{level}] ";
+	$self->{levels}->{"done" . $rule->{level}} ||= 0;
+	$self->{levels}->{"done" . $rule->{level}} += 1;
+	return 2 if($self->{outdated});
+	$self->{msghd} = $self->progress . " L$rule->{level}>";
 	$self->{response} = undef;
 	$self->{callback_called} = undef;
 	app_prompt($self->{msghd} . 'Rule',$rule->{source},"\n");
 	if($self->{request}->{createdir} && $res->{title}) {
 		my $wd = _safe_path($res->{title});
-		if(! -d $wd) {
-			$self->makedir($wd) or die("$!\n");
+		if(!$self->make_change_dir($wd,'autoApply')) {
+			return undef;
 		}
-		$self->changedir($wd,'autoApply request') or die("$!\n");
 	}
 	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
     app_prompt($self->{msghd} . "Directory",short_wd($DIR_KEEP,$self->{startwd}),"\n");
@@ -299,7 +324,8 @@ sub autoApply {
 		#if($response->{track_this}) {
 		#	die("Track this: \n\t" . join("\n\t",@{$response->{pass_data}},@{$response->{data}}),"\n")
 		#}
-		$self->process($response,$rule);
+		my(undef,@r) = $self->process($response,$rule);
+		push @DATAS,@r if(@r);
 		if($self->{outdated}) {
 			chdir $DIR_KEEP;
 			return 2;
@@ -307,6 +333,8 @@ sub autoApply {
 		if($response->{nextlevel}) {
 			my %next = %{$response->{nextlevel}};
 			app_prompt($self->{msghd} . 'NextLevel','Get ' . $next{count} . " items\n");# if($next{level});
+			$self->{levels}->{"count" . $next{level}} ||= 0;
+			$self->{levels}->{"count" . $next{level}} += $next{count};
 			#if($response->{track_this}) {
 			#	die("Track this: \n\t" . join("\n\t",@{$response->{pass_data}},@{$response->{data}}),"\n")
 			#}
@@ -339,8 +367,8 @@ sub autoApply {
 					url=>$link,
 					title=>$linkname,
 				};
-				$req->{progress} = ($res->{progress} || "");
-				$req->{progress} .= "[$idx/$count]" unless($count == 1);
+#				$req->{progress} = ($res->{progress} || "");
+#				$req->{progress} .= "[$idx/$count]" unless($count == 1);
 				$idx--;
 				push @requests,$req;
 			}
@@ -350,7 +378,10 @@ sub autoApply {
 			}
 			else {
 				foreach my $req (@requests) {
-					$self->processNextLevel($req);
+					my(undef,@r) = $self->processNextLevel($req);
+					if(@r) {
+						push @DATAS,@r;
+					}
 					if($self->{outdated}) {
 						chdir $DIR_KEEP;
 						return 2;
@@ -359,10 +390,10 @@ sub autoApply {
 				}
 			}
 		}
-		$self->{msghd} = "[Level $rule->{level}] ";
+#		$self->{msghd} = "[Level $rule->{level}] ";
 	}
 	chdir($DIR_KEEP);
-	return 1;
+	return 1,@DATAS;
 }
 sub processNextLevel {
 	my $self = shift;
@@ -398,6 +429,25 @@ sub makedir {
 	mkdir($dir);
 }
 
+sub make_change_dir {
+	my $self = shift;
+	my $wd = shift;
+	my $caller = shift(@_) || '';
+		if($wd) {
+			unless(-d $wd or $self->makedir($wd)) {
+				app_error($self->{msghd}, 
+					"Error creating directory $wd:$!\n");
+				return undef;
+			}
+			unless($self->changedir($wd,$caller)) {
+				app_error($self->{msghd}, 
+					"Error changing directory $wd:$!\n");
+				return undef;
+			}
+		}
+	return 1;
+}
+
 sub callback_applyRule {
 	my($from,$rule,$result,$self) = @_;
 	my $response = $self->to_response($result,$rule);
@@ -418,6 +468,7 @@ sub process {
 	my $self = shift;
 	my $response = shift;
 	my $rule = shift;
+	my @DATAS;
 	if($self->{request}->{callback_process}) {
 		app_prompt($self->{msghd},"Get " . $response->{count} . " items\n") if($response->{count});
 		unshift @_,$self,$response,$rule;
@@ -426,16 +477,13 @@ sub process {
 	my $wd;
 	if($self->{request}->{createdir}) {
 		my $wd = _safe_path($response->{title});
-		if($wd) {
-			if(! -d $wd) {
-				$self->makedir($wd) or die("$!\n");
-			}
-			$self->changedir($wd,'process') or die("$!\n");
+		if(!$self->make_change_dir($wd,'process')) {
+			return undef,$response->{data} ? @{$response->{data}} : ();
 		}
 	}
 	if(!$response->{count}) {
 		app_prompt($self->{msghd}, "Nothing to process" . ($response->{title} ? " for [$response->{title}]\n" : "\n" ));
-		return $response->{data};
+		return;
 	}
 	app_prompt($self->{msghd},"Get " . $response->{count} . " items\n") if($response->{count});
 	return unless($response->{count}>0);
@@ -454,7 +502,17 @@ sub process {
 		return $self->{request}->{callback_action}($self,$response->{data},$response,$rule);
 	}
 	$self->do_action($response->{data},$response,$rule);
-	return $response->{data};
+	return 1,@{$response->{data}};
+}
+
+sub NEW_SAVER {
+	my $self = shift;
+	my @SAVE_OPTS;
+	foreach(qw/thread include exclude/) {
+		next unless($self->{request}->{$_});
+		push @SAVE_OPTS,"--" . $_,$self->{request}->{$_};
+	}
+	return MyPlace::Program::Saveurl->new(@SAVE_OPTS);
 }
 
 sub do_action {
@@ -478,9 +536,12 @@ sub do_action {
 	my $action = $response->{pipeto} || $response->{action} || '';
 
 	my %ACTION_MODE;
-	if($action =~ m/^!(.+)$/) {
+	if($action =~ m/^\!(.+)$/) {
 		$ACTION_MODE{FORCE} = 1;
 		$action = $1;
+	}
+	else {
+		$ACTION_MODE{FORCE} = $self->{request}->{force};
 	}
     if($file) {
 		$file =~ s/\s*\w*[\/\\]\w*\s*//g if($file);
@@ -499,7 +560,7 @@ sub do_action {
 		$action =~ s/#URLRULE_BASE#/$base/g;
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}
-	$self->{DATAS_COUNT} = $self->{DATAS_COUNT} ? $self->{DATAS_COUNT} + @$data : @$data;
+	$self->{DATAS_COUNT} = 0 unless(defined $self->{DATAS_COUNT});# ? $self->{DATAS_COUNT} + @$data : @$data;
 	if($action eq 'DOWNLOADER') {
 		my $f_urls='urls.lst';
 		app_prompt($self->{msghd} . "Write data to database",$f_urls,"\n");
@@ -521,7 +582,13 @@ sub do_action {
 		my $OUTDATE = 1;
 		if(open FO,'>>',$f_urls) {
 			foreach(@{$data}) {
-				next if($records{$_});
+				if($records{$_}) {
+					if(m/weishi\.com|weishi_pic/) {
+						$OUTDATE = 1;
+						last;
+					}
+					next;
+				}
 				print FO $_,"\n";
 				$OUTDATE = 0;
 				$count++;
@@ -534,8 +601,10 @@ sub do_action {
 				'--input'=>$f_urls,
 				'--title'=>$response->{title},
 				'--retry',
+				'--include'=>$self->{request}->{include},
+				'--exclude'=>$self->{request}->{exclude},
 			);
-			$self->{DATAS_COUNT} = $count;
+			$self->{DATAS_COUNT} += $count;
 			$self->outdated() if($OUTDATE);
 			return $count;
 		}
@@ -567,6 +636,10 @@ sub do_action {
 		if(open FO,'>>',$dbfile) {
 			foreach(@{$data}) {
 				if($records{$_}) {
+					if(m/weishi\.com|weishi_pic/) {
+						$OUTDATE = 1;
+						last;
+					}
 					next;
 				}
 				$idx++;
@@ -577,7 +650,7 @@ sub do_action {
 			}
 			close FO;
 			app_prompt($self->{msghd} . "Write $count lines to",$dbfile,"\n");
-			$self->{DATAS_COUNT} = $count;
+			$self->{DATAS_COUNT} += $count;
 			#$self->{DATAS_COUNT} - @$data + @KEEPS;
 			if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
 				$self->outdated();
@@ -595,11 +668,15 @@ sub do_action {
 			print STDERR colored('RED',"Ingored (File exists)...\n");
 			return undef;
 		}
-		else {
-            open FO,">",$file or die("$!\n");
+		elsif(open FO,">",$file) {
             print FO @{$data};
             close FO;
 			print STDERR "[OK]\n"	
+		}
+		else {
+			app_error($self->{msghd}, 
+					"Error opeing file $file:$!\n");
+			return undef;
 		}
     }
     elsif($response->{hook}) {
@@ -623,21 +700,16 @@ sub do_action {
 	}
 	elsif($action eq 'SAVE') {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-		if(!$PROGRAM_SAVE) {
-			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
-			$PROGRAM_SAVE->setOptions("--history","--referer",$base) if($base);
-			$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
-		}
+		$PROGRAM_SAVE ||= $self->NEW_SAVER;
+		$PROGRAM_SAVE->setOptions('--hisotry');
+		$PROGRAM_SAVE->setOptions('--referer',$base) if($base);
 		$PROGRAM_SAVE->addTask(@{$data});
 		$PROGRAM_SAVE->execute();
 	}
 	elsif($action eq '!SAVE') {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-		if(!$PROGRAM_SAVE) {
-			$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
-			$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
-			$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
-		}
+		$PROGRAM_SAVE ||= $self->NEW_SAVER;
+		$PROGRAM_SAVE->setOptions('--referer',$base) if($base);
 		$PROGRAM_SAVE->addTask(@{$data});
 		$PROGRAM_SAVE->execute();
 	}
@@ -658,17 +730,20 @@ sub do_action {
 			my $link = $_;
 			$link =~ s/\t.+$//;
 			foreach my $rec(@RECORDS) {
-				next if($link eq $rec);
+				if($link eq $rec) {
+					if($link =~ m/weishi\.com|weishi_pic/) {
+						$OUTDATE = 1;
+						last;
+					}
+					next;
+				}
 				push @KEEPS,$_;
 				$OUTDATE = 0;
 			}
 		}
 		if(@KEEPS) {
-			if(!$PROGRAM_SAVE) {
-				$PROGRAM_SAVE = new MyPlace::Program::Saveurl;
-				$PROGRAM_SAVE->setOptions("--referer",$base) if($base);
-				$PROGRAM_SAVE->setOptions("--thread",$self->{request}{thread}) if($self->{request}{thread});
-			}
+			$PROGRAM_SAVE ||= $self->NEW_SAVER;
+			$PROGRAM_SAVE->setOptions('--referer',$base) if($base);
 			$PROGRAM_SAVE->addTask(@KEEPS);
 			$PROGRAM_SAVE->execute();
 			if(open FO,">>","URLS.txt") {
@@ -700,4 +775,77 @@ sub do_action {
 1;
 
 __END__
+
+=pod
+
+=head1  NAME
+
+MyPlace::URLRule::OO
+
+=head1  SYNOPSIS
+		
+		use MyPlace::URLRule::OO;
+		my $UOO = MyPlace::URLRule::OO->new(
+			'createdir'=>0,
+			'action'=>$action,
+			'include'=>'\.jpg',
+			'exclude'=>'',
+			'thread'=>1,
+		);
+		foreach my $url(@urls) {
+			$UOO->autoApply({
+					count=>1,
+					url=>$url,
+					level=>$level,
+			});
+		}
+		if($UOO->{DATAS_COUNT}) {
+			print STDERR "OK\n";
+		}
+		else {
+			print STDERR "Nothing to do\n";
+		}
+
+=head1  OPTIONS
+
+=over 12
+
+=item B<--include>
+
+Config inclusive patterns for supported downloaders
+
+=item B<--exclude>
+
+Config exclusive patterns for supported downloaders
+
+=item B<--thread>
+
+Config numbers of threads for supported downloaders
+
+=back
+
+=head1  DESCRIPTION
+
+Object orient class module for MyPlace::URLRule
+
+=head1  CHANGELOG
+
+2014-11-22 02:51  xiaoranzzz  <xiaoranzzz@MyPlace>
+       
+	* file created.
+
+2015-04-20 01:09  xiaoranzzz <xiaoranzzz@MyPlace>
+	
+	* Add pod document
+	* Tag as version 2.0
+
+=head1  AUTHOR
+
+xiaoranzzz <xiaoranzzz@MyPlace>
+
+=cut
+
+#       vim:filetype=perl
+
+
 
