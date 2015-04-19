@@ -34,6 +34,10 @@ my @OPTIONS = qw/
 		retry
 		no-recursive|nr
 		no-createdir|nc
+		fullname
+		no-download
+		include|I:s
+		exclude|X:s
 /;
 
 sub new {
@@ -77,11 +81,11 @@ sub do_list {
 	my $idx = 1;
 	foreach(@target) {
 		my @rows = @$_;
-		my $dbname = shift(@rows);
-		next unless($dbname);
-		print STDERR "[" . uc($dbname),"]:\n";
+		my $host = shift(@rows) || '*';
+		print STDERR "[" . uc($host),"]:\n";
 		foreach my $item(@rows) {
-			printf "\t[%03d] %-20s [%d]  %s\n",$idx,$item->[2],$item->[3],$item->[1];
+			my $dbname = $item->[4] || $host;
+			printf "%-20s: [%03d] %-20s [%d]  %s\n",$dbname,$idx,$item->[2],$item->[3],$item->[1];
 			$idx++;
 		}
 	}
@@ -108,10 +112,10 @@ sub get_request {
 	my %r;
 	foreach(@target) {
 		my @rows = @$_;
-		my $dbname = shift(@rows);
-		next unless($dbname);
+		my $host = shift(@rows) || '*';
 		foreach my $item(@rows) {
 			next unless($item && @{$item});
+			my $dbname = $item->[4] || $host;
 			my $title = $OPTS->{createdir} ? $item->[1] . "/$dbname/" : "";
 			next unless(check_trash($title));
 			push @request,{
@@ -135,10 +139,17 @@ sub do_action {
 	use MyPlace::URLRule::OO;
 	my ($count,$r,@request) = $self->get_request(@target);
 	my $idx = 0;
+    use Data::Dumper;
+    print STDERR Data::Dumper->Dump([$OPTS],qw/*OPTS/),"\n";
 	my $URLRULE = new MyPlace::URLRule::OO(
 			'action'=>$action,
 			'thread'=>$OPTS->{thread},
 			'createdir'=>$OPTS->{createdir},
+			'options'=>{
+				fullname=>$OPTS->{fullname},
+			},
+			'include'=>$OPTS->{include},
+			'exclude'=>$OPTS->{exclude},
 	);
 	foreach(@request) {
 		$idx++;
@@ -166,6 +177,9 @@ sub do_downloader {
 
 	my %r;
 	
+	if($OPTS->{'no-download'}) {
+		return $self->do_action('DATABASE',@target);
+	}	
 	$self->do_action('DATABASE',@target);
 
 	use MyPlace::Program::Downloader;
@@ -173,14 +187,16 @@ sub do_downloader {
 	my @DLOPT = qw/--quiet --input urls.lst/;
 	push @DLOPT,"--recursive" if($OPTS->{recursive});
 	push @DLOPT,"--retry" unless($OPTS->{'no-retry'});
+	push @DLOPT,'--include',$OPTS->{include} if($OPTS->{include});
+	push @DLOPT,'--exclude',$OPTS->{exclude} if($OPTS->{exclude});
 	
 	if($OPTS->{createdir}) {
 		foreach(@target) {
 			my @rows = @$_;
-			my $dbname = shift(@rows);
-			next unless($dbname);
+			my $host = shift(@rows);
 			foreach my $item(@rows) {
 				next unless($item && @{$item});
+				my $dbname = $item->[4] || $host;
 				my $title = $item->[1] . "/$dbname";# . $item->[0];
 				next unless(check_trash($title));
 				push @request,$title;
@@ -217,6 +233,9 @@ sub do_downloader {
 sub do_update {
 	my $self = shift;
 	my $cmd = shift(@_) || "UPDATE";
+	if($self->{options}->{'no-download'}) {
+		$cmd = 'DATABASE' if($cmd =~ m/^(?:SAVE|UPDATE|DOWNLOADER|DOWNLOAD)$/i);
+	}
 	unshift @_,$self,$cmd;
 	goto &do_action;
 }
@@ -307,19 +326,21 @@ sub do_saveurl {
 	my $COMMAND = shift(@_) || $self->{COMMAND};
 	my $NAMES = shift(@_) || $self->{NAMES};
 	my $DATABASE = shift(@_) || $self->{DATABASE};
-	my $DATABASENAME = $DATABASE->[0];
 	my $OPTS = $self->{options};
-		my $SQ = MyPlace::URLRule::SimpleQuery->new($DATABASENAME);
+		my $SQ = MyPlace::URLRule::SimpleQuery->new($DATABASE->[0]);
 		my($id,$name) = $SQ->item(@$NAMES);
+		my $DATABASENAME = $DATABASE->[0];
 		if(!$id) {
 			print STDERR "Error: ",$name,"\n";
 			return $EXIT_CODE{FAILED};
 		}
 		use MyPlace::URLRule::OO;
 		my $URLRULE = new MyPlace::URLRule::OO(
-				'action'=>'DOWNLOADER',
+				'action'=>$OPTS->{'no-download'} ? 'DATABASE' : 'DOWNLOADER',
 				'thread'=>$OPTS->{thread},
 				'createdir'=>$OPTS->{createdir},
+				'include'=>$OPTS->{include},
+				'exclude'=>$OPTS->{exclude},
 		);
 		$URLRULE->autoApply({
 				count=>1,
