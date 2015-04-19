@@ -8,7 +8,7 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&new_json_data &get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data);
+    @EXPORT_OK      = qw(&new_json_data &get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data &expand_url &create_title);
 }
 use Encode qw/from_to decode encode/;
 use MyPlace::Curl;
@@ -137,8 +137,14 @@ sub get_url {
 			last;
 		}
 		$retry--;
+		sleep 3;
 	}
-	return $data;
+	if(wantarray) {
+		return $status,$data;
+	}
+	else {
+		return $data;
+	}
 }
 sub decode_html {
 	my $html = shift;
@@ -274,6 +280,34 @@ sub unescape_text {
     $text =~ s/\s{2,}/ /g;
     $text =~ s/(?:^\s+|\s+$)//;
     return $text;
+}
+
+sub create_title {
+	my $title = shift;
+	$title = unescape_text($title);
+	return unless($title);
+	$title =~ s/[<>\?*\:\"\|]+//g;
+	return $title;
+}
+
+sub expand_url {
+	my $url = shift;
+	if($url =~ m/^http:\/\/url.cn/) {
+		open FI,'-|',"curl -v -- \"$url\" 2>&1" or return $url;
+	}
+	else {
+		open FI,'-|','curl','--silent','-I',$url or return $url;
+	}
+	foreach(<FI>) {
+		chomp;
+		if(m/^<?\s*Location:\s*(http:.+)$/) {
+			my $loc = $1;
+			$loc =~ s/\s+$//;
+			print STDERR "$url => $loc\n";
+			return $loc;
+		}
+	}
+	return $url;
 }
 
 1;
