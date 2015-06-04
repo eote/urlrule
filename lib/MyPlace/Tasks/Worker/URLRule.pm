@@ -104,19 +104,24 @@ my $USQ;
 		my $host = shift;
 
 
-		if($url =~ m/^http:\/\/www\.weipai\.cn\/(?:user|videos|follows|fans)\/([^\/\s%&]+)/) {
-			my $uid = $1;
-			my $info = MyPlace::Weipai::get_data('user',$uid,1);
-			return $1,$info->{username},'weipai.cn';
-		}
-		elsif($url =~ m/weipai\.cn|l\.mob\.com/) {
-			my $user = MyPlace::Weipai::get_user_from_page($url);
-			if($user) {
-				return $user->{uid},$user->{username},'weipai.cn';
-			}
-			else {
-				return undef;
-			}
+#		if($url =~ m/^http:\/\/www\.weipai\.cn\/(?:user|videos|follows|fans)\/([^\/\s%&]+)/) {
+#			my $uid = $1;
+#			my $info = MyPlace::Weipai::get_data('user',$uid,1);
+#			return $1,$info->{username},'weipai.cn';
+#		}
+#		elsif($url =~ m/weipai\.cn|l\.mob\.com/) {
+#			my $user = MyPlace::Weipai::get_user_from_page($url);
+#			if($user) {
+#				return $user->{uid},$user->{username},'weipai.cn';
+#			}
+#			else {
+#				return undef;
+#			}
+#		}
+		if($url =~ m/weipai\.cn/) {
+			require MyPlace::Weipai;
+			my $info = MyPlace::Weipai::extract_info($url);
+			return $info->{uid},$info->{uname},'weipai.cn';
 		}
 		elsif($url =~ m/vlook\.cn/) {		
 			my ($name,$id);
@@ -146,7 +151,6 @@ my $USQ;
 				}
 				last if($name and $id);
 			}
-			#die "[$url] => $name, $id\n";
 			$name =~ s/的个人视频主页.*$// if($name);
 			return $id,$name,$host;
 		}
@@ -198,8 +202,8 @@ sub sites_save_links {
 	my $level = $task->{level};
 	foreach(@urls) {
 		$taskscount++;
-		printf STDERR "+ [%d] sites <URL> AFD,SAVEURL %s\n",$taskscount, $_;
-		my $newtask = NEW_TASK($task,$task->{namespace},'sites','<URL>','AFD,SAVEURL',$_);
+		printf STDERR "+ [%d] sites <URL> AD,SAVEURL %s\n",$taskscount, $_;
+		my $newtask = NEW_TASK($task,$task->{namespace},'sites','<URL>','AD,SAVEURL',$_);
 		push @dt,$newtask;
 	}
 	if(defined $level) {
@@ -231,17 +235,21 @@ sub score {
 		print STDERR "Error opening file \"$board\":$!\n";
 		return;
 	}
-	foreach my $row(@rows) {
+	while(@rows) {
+		my $row = shift(@rows);
 		if(defined $score) {
 			print FO $row;
 			next;
 		}
 		my ($r_id,$r_count,$r_point,@datas) = split(/\s*\t\s*/,$row);
-		next unless($r_id);
+		if(!$r_id) {
+			print FO $row;
+			next;
+		}
 		if($r_id eq $id) {
 			$score = int($r_point + $point);
 			$count = $r_count ? $r_count + 1 : 1;
-			next;
+			last;
 		}
 		else {
 			print FO $row;
@@ -252,8 +260,23 @@ sub score {
 		$count = 1;
 	}
 	print FO join("\t",$id,$count,$score,@_),"\n";
+	print FO @rows if(@rows);
 	close FO;
 	print STDERR "SCORE: $id => $count/$score\n";
+}
+
+sub error {
+	my $self = shift;
+	my $task = shift;
+	my $WD = $task->{target_dir} || $task->{workdir} || $self->{target_dir} || ".";
+	my $msg = shift;
+	my $NOTLOG = shift;
+	if((!$NOTLOG) and open(my $FO,">>",catfile($WD,'errors.log'))) {
+		print $FO $task->to_string(),"\n";
+		print $FO "\t$msg\n";
+		close $FO;
+	}
+	return $TASK_STATUS->{ERROR},$msg;
 }
 
 sub work {
@@ -261,7 +284,7 @@ sub work {
 	my $task = shift;
 	my $type = shift;
 	if(!$type) {
-		return $TASK_STATUS->{ERROR},'No urlrule/type specified';
+		return $self->error($task,'No urlrule/type specified');
 	}
 	$task->{title} = "[urlrule] $type " . join(" ",@_);
 	
@@ -315,11 +338,11 @@ sub work {
 		}
 		my $level  = shift(@args) || 0;
 		my $action = shift(@args) || '!DOWNLOADER';
-		if($self->{'no-download'}) {
+		if($self->{options}->{'no-download'}) {
 			$action = '!DATABASE' if($action =~ m/^!?(?:SAVE|UPDATE|DOWNLOADER|DOWNLOAD)$/i);
 		}
 		if(!@urls) {
-			return $TASK_STATUS->{ERROR},"No url specified";
+			return $self->error($task,"No url specified");
 		}
 		my $ERROR_WD = $self->set_workdir($task,$WD);
 		return $ERROR_WD if($ERROR_WD);
@@ -351,7 +374,7 @@ sub work {
 		my $hosts_o = shift;
 		
 		if(!$hosts_o) {
-			return $TASK_STATUS->{ERROR},'No hosts specified';
+			return $self->error($task,'No hosts specified');
 		}
 		if(lc($hosts_o) eq 'savelinks') {
 			$WD = $task->{source_dir} || $self->{source_dir} || ".";
@@ -376,7 +399,7 @@ sub work {
 		my $command = shift;
 		if(!$command) {
 			$task->{summary} = 'No action assicated';
-			return $TASK_STATUS->{ERROR};
+			return $self->error($task,$task->{summary});
 		}
 		#$hosts_o = 'weipai.cn,vlook.cn,meipai.com,miaopai.com' if($hosts_o eq '*');
 		my ($hosts,@HOSTS_NEXT) = split(/\s*[,\|]\s*/,$hosts_o);
@@ -400,7 +423,7 @@ sub work {
 		}	
 
 		my ($CMD,@CMDS_NEXT) = split(/\s*[,\|]\s*/,uc($command));
-
+		
 		if($CMD eq 'ADD') {
 		}
 		elsif($CMD =~ m/^[ADFUS]+$/) {
@@ -429,10 +452,6 @@ sub work {
 			$CMD = shift @CC;
 			unshift @CMDS_NEXT,@CC;
 		}
-		elsif($CMD eq '!LIKES') {
-			$CMD = 'LIKES';
-			$OPTS{FORCE} = 1;
-		}
 
 
 
@@ -445,7 +464,7 @@ sub work {
 #			}
 #		}
 		if(!$ARG1) {
-			return $TASK_STATUS->{ERROR},'Need more arguments';
+			return $self->error($task,'Need more arguments');
 		}
 		elsif($ARG1 and $ARG1 =~ m/^https?:/) {
 				
@@ -457,7 +476,7 @@ sub work {
 
 				my ($key1,$key2,$key3) = extract_info_from_url($ARG1);
 				if(!($key1 or $key2)) {
-					return $TASK_STATUS->{ERROR},'Extract information from URL failed';
+					return $self->error($task,'Extract information from URL failed');
 				}
 				unshift @_,($key1,$key2,$ARG1);
 				$hosts = $key3 if($key3);
@@ -508,7 +527,7 @@ sub work {
 		if(@_) {
 			my $id = shift;
 			my $name  = shift;
-			if(!$name) {
+			if(!defined $name) {
 				if($id =~ m/^(.+)\t+([^\t]+)$/) {
 					$id = $1;
 					$name = $2;
@@ -521,6 +540,15 @@ sub work {
 			else {
 				unshift @_,$id,$name;
 			}
+		}
+
+		if($CMD =~ m/^!(.+)$/) {
+			$CMD = $1;
+			$OPTS{FORCE} = 1;
+		}
+		elsif($CMD =~ m/^([\~\@\#\$\%\&?\+\-\*\^])(.+)$/) {
+			$CMD = $2;
+			$OPTS{$1} = 1;
 		}
 
 
@@ -548,11 +576,12 @@ sub work {
 			my $name = shift;
 			my $URL = shift;
 			if(!($id or $name)) {
-				return $TASK_STATUS->{ERROR},"Invalid URL $URL";
+				return $self->error($task,"Invalid URL $URL");
 			}
 			my $exitval;
 			my $msg = "OK";
 			$task->{title} = "[urlrule] sites $hosts SAVEURLS $URL " . ($id or $name); 
+			push @USQ_ARGS,'--force' if($OPTS{FORCE});
 			foreach($URL,@_) {
 				my ($exit,$r) = $USQ->execute(@USQ_ARGS,'--hosts',$hosts,'--saveurl',$_,($id or $name));
 				if($exit != 0 ) {
@@ -565,16 +594,23 @@ sub work {
 					}
 				}
 			}
-			return ($exitval ? $TASK_STATUS->{ERROR} : $TASK_STATUS->{FINISHED}),$msg;
+			if($exitval) {
+				return $self->error($task,$msg);
+			}
+			else {
+				return $TASK_STATUS->{FINISHED},$msg;
+			}	
 		}
 		elsif($CMD eq 'SAVEURL') {	
 			my $id = shift(@_) || "";
 			my $name = shift(@_) || "";
 			my $URL = shift;
 			if(!$URL) {
-				return $TASK_STATUS->{ERROR},"No URL specified";
+				return $self->error($task,"No URL specified");
 			}
 			$task->{title} = "[urlrule] sites $hosts SAVEURL $URL $id $name";
+			push @USQ_ARGS,'--force';
+			push @USQ_ARGS,'--force-action';# if($OPTS{FORCE});
 			my($exitval,$r) = $USQ->execute(@USQ_ARGS,'--hosts',$hosts,'--saveurl',$URL,($id or $name));
 			if($exitval == 0) {
 				if($r and $r->{directory}) {
@@ -590,7 +626,7 @@ sub work {
 				return $TASK_STATUS->{DONOTHING},$FROMURL . 'Nothing to do';
 			}
 			else {
-				return $TASK_STATUS->{ERROR},"Failed";
+				return $self->error($task,"Failed");
 			}
 		}
 		elsif($CMD eq 'FOLLOW') {
@@ -611,7 +647,7 @@ sub work {
 				}
 				else {
 					print STDERR "\t$!\t[FAILED]\n";
-					return $TASK_STATUS->{ERROR},"Create directory [$dstd] failed:$!";
+					return $self->error($task,"Create directory [$dstd] failed:$!");
 				}
 			}
 			#print STDERR getcwd(),"\n";
@@ -630,7 +666,7 @@ sub work {
 			my $name = shift;
 			my $URL = shift;
 			unless($id and $name) {
-				return $TASK_STATUS->{ERROR},'No id/name specified';
+				return $self->error($task,'No id/name specified');
 			}
 			$task->{title} = "[urlrule] sites $hosts ADD $id $name";
 			app_message2 "\tAdd [$id $name] to database of [$hosts]\n";
@@ -644,16 +680,75 @@ sub work {
 		}
 		elsif($CMD eq 'FOLLOW_LIKES') {
 			my $id = shift;
-			my $name  = shift || "";
-			if($id =~ m/^回复@(.+):\s*$/) {
+			my $name  = shift;
+			my $URL = shift(@_) if($FROMURL);
+			my $begin_cursor = shift;
+			my $last_cursor = shift;
+			
+			if($last_cursor) {
+				#	%s	%s	%d	%d
+			}
+			elsif($begin_cursor) {
+				#	%s	%s	%d
+				$last_cursor = $begin_cursor;
+				$begin_cursor = 0;
+			}
+			elsif($name) {
+				if($id =~ m/^[\da-zA-Z]{24}$/) {
+					#real id
+				}
+				elsif($name =~ m/^\d+$/) {
+					#	%s %d
+					$begin_cursor = 0;
+					$last_cursor = $name;
+					require MyPlace::Weipai;
+					my $nid = MyPlace::Weipai::id($id);
+					if($nid) {
+						$name = $id;
+						$id = $nid;
+					}
+				}
+			}
+			elsif($id) {
+				require MyPlace::Weipai;
+				my $nid = MyPlace::Weipai::id($id);
+				if($nid) {
+					$name = $id;
+					$id = $nid;
+				}
+			}
+			else {
+				return $self->error($task,"Nothing to do");
+			}
+
+			if(!$name) {
+			}
+			elsif($name =~ m/^回复@(.+?):?\s*$/) {
+				$name = $1;
+			}
+			elsif($id =~ m/^回复@(.+?):?\s*$/) {
 				$id = $1;
 			}
-			my $key = ($id && $name) ? "$id $name" : $id ? $id : $name ? $name : '';
-			my $URL = shift;
-			$task->{title} = "[urlrule] sites $hosts FOLLOW_LIKES $key";
+
+			my @key1 = ($id);
+			push @key1,$name if(defined $name);
+
+			my @key2 = ();
+			push @key2, $begin_cursor if(defined $begin_cursor);
+			push @key2, $last_cursor if(defined $last_cursor);
+			$task->{title} = "[urlrule] sites $hosts FOLLOW_LIKES " . join(" ",@key1);
 			my $dstd = "sites/$hosts";
-			my $newtask = NEW_TASK($task,$task->{namespace},'sites',$hosts,'LIKES',$id,$name);
-			$task->queue($task->{level},$newtask);
+			
+			my @cmds = ();
+			if($OPTS{FORCE}) {
+				push @cmds , '!LIKES','!';
+			}
+			else {
+				push @cmds, 'LIKES';
+			}
+			my $newtask = NEW_TASK($task,$task->{namespace},'sites',$hosts,@cmds,@key1,@key2,@_);
+
+			$task->queue($task->{level},$newtask,1);
 			if(! -d $dstd) {
 				app_warning("Creating directory [$dstd] ... ");
 				if(system("mkdir","-p","--",$dstd)==0) {
@@ -661,12 +756,12 @@ sub work {
 				}
 				else {
 					print STDERR "\t$!\t[FAILED]\n";
-					return $TASK_STATUS->{ERROR},"Create directory [$dstd] failed:$!";
+					return $self->error($task,"Create directory [$dstd] failed:$!");
 				}
 			}
 			#print STDERR getcwd(),"\n";
 			#print STDERR "$dstd/follow_likes.txt";
-			if(system('simple_query','-f',"$dstd/follow_likes.txt",'--command','additem','--',$id,$name)==0) {
+			if(system('simple_query','-f',"$dstd/follow_likes.txt",'--command','additem','--',@key1)==0) {
 				$task->{git_commands}=[['add',catfile($WD,"$dstd/follow_likes.txt")]];
 				return $TASK_STATUS->{FINISHED}, ($FROMURL ? "${FROMURL}OK" : "OK");
 			}
@@ -677,14 +772,30 @@ sub work {
 		}
 		elsif($CMD eq 'LIKES') {
 			if($hosts ne 'weipai.cn') {
-				return $TASK_STATUS->{ERROR},"Command $CMD not support for host $hosts";
+				return $self->error($task,"Command $CMD not support for host $hosts");
 			}
+
 			my $id = shift;
 			if(!$id) {
-				return $TASK_STATUS->{ERROR},"No ID specified";
+				return $self->error($task,"No ID specified");
 			}
-			my $FDIR = "sites/$hosts/";
-			my $FALL = catfile($FDIR,'likes_all.txt');
+			my $FOLLOW_ID = 0;
+			if($id eq '!') {
+				$FOLLOW_ID = 1;
+				$id = shift;
+			}
+			if(!$id) {
+				return $self->error($task,"No ID specified");
+			}
+			my $HDIR = catdir('sites',$hosts);
+			my $FDIR = catdir($HDIR,'likes');
+			foreach($HDIR,$FDIR) {
+				next if(-d $_);
+				if(!mkdir $_) {
+					return $self->error($task,"Creating directory $_:$!");
+				}
+			}
+			my $FALL = catfile($HDIR,'likes_all.txt');
 			my $A = $self->{URLRULE_LIKES_ALL};
 			my $A_count;
 			if(!$A) {
@@ -708,8 +819,23 @@ sub work {
 			open my $FO_ALL,">>",$FALL or print STDERR "Error opening $FALL:$!\n";	
 			use MyPlace::Weipai qw/get_likes/;
 			my @result;
+			my $name;
+			if($id !~ m/^[45][0-9a-zA-Z]{23}$/) {
+				require MyPlace::Weipai;
+				my $nid = MyPlace::Weipai::id($id);
+				if($nid) {
+					$name = $id;
+					$id = $nid;
+				}
+			}
+			else {
+				$name = shift;
+			}
 			my @IDs = ($id);
-			my $name = shift;
+			my $key = ($id && $name) ? "$id $name" : $id ? $id : $name ? $name : '';
+			my $URL = shift(@_) if($FROMURL);
+			my $cursor = shift;
+			my $LAST_CURSOR = shift;
 			my $count = 0;
 			foreach my $id (@IDs) {
 				if($id =~ m/^\s*([^\s]+)\s*\t\s*([^\s]+)/) {
@@ -721,7 +847,9 @@ sub work {
 					$id =~ s/\s+.*//;
 					$name ||= $id;
 				}
-				my $FLIKE = catfile($FDIR,"likes_$name.txt");
+				my $fname = 'likes_' . $name . '.txt';
+				$fname =~ s/[\/\\\?\*:>]+/./;
+				my $FLIKE = catfile($FDIR,$fname);
 				my %record;
 				if(open FI,'<',$FLIKE) {
 					while(<FI>) {
@@ -736,13 +864,16 @@ sub work {
 					}
 					close FI;
 				}
-				my $likes = get_likes($id,10);#->{video_list};
+				my $likes = $cursor ? get_likes($id,10,$cursor) : get_likes($id,10);#->{video_list};
 				if(!open FO,'>>',$FLIKE) {
 					print STDERR "Error opening $FLIKE: $!\n";
 					next;
 				}
 				while(1) {
 					my $processed = 1;
+					if($likes->{video_list}) {
+						print STDERR " \t=> " . scalar(@{$likes->{video_list}}) . " liked video items\n";
+					}
 					foreach(@{$likes->{video_list}}) {
 						foreach my $key(qw/video_desc nickname video_id video_desc user_id video_play_url date/) {
 							$_->{$key} = '' unless(defined $_->{$key});
@@ -762,7 +893,7 @@ sub work {
 						);
 
 						if($record{$_->{video_id}}) {
-							next unless($OPTS{FORCE});
+							next;# unless($OPTS{FORCE});
 						}
 						else {
 							$record{$_->{video_id}} = 1;
@@ -781,33 +912,46 @@ sub work {
 						print STDERR "LIKES: $_->{date} $_->{video_id}\t$_->{nickname}\t$_->{video_desc}\n";
 						$count++;
 					}
-					last if($processed);
-					last unless($likes->{next_cursor});
-					$likes = get_likes($id,10,$likes->{next_cursor});#->{video_list};
+					if($LAST_CURSOR and $cursor < $LAST_CURSOR) {
+						$cursor = $cursor + 10;
+					}
+					elsif($processed) {
+						last;
+					}
+					elsif($likes->{next_cursor}) {
+						$cursor = $likes->{next_cursor};
+					}
+					else {
+						last;
+					};
+					$likes = get_likes($id,10,$cursor);#->{video_list};
 				}
 				close FO;
 				print STDERR "LIKES: Get $count item(s) from <$name>\n";
 				if($count > 0) {
-					$self->score(catfile($FDIR,'LIKES_SCORE.txt'),"$id",1,$name);
+					$self->score(catfile($HDIR,'LIKES_SCORE.txt'),"$id",1,$name,$cursor || ());
 				}
 				else {
-					$self->score(catfile($FDIR,'LIKES_SCORE.txt'),"$id",0,$name);
+					$self->score(catfile($HDIR,'LIKES_SCORE.txt'),"$id",0,$name,$cursor || ());
 				}
 			}
-			my @dt;
-			foreach(@result) {
-				printf STDERR "+ %s AFD,SAVEURL %s\n",$hosts, $_;
-				my $newtask = NEW_TASK($task,$task->{namespace},'sites',$hosts,'AFD,SAVEURL',$_);
-				push @dt,$newtask;
-			}
-			my $level = $task->{level} if($task->{level});
-			if($level) {
-				$task->queue($level,\@dt,1);
-			}	
-			else {
-				$task->queue(\@dt,1);
-			}
 			$self->{URLRULE_LIKES_ALL} = $A;
+			my $URL_CMD = ($FOLLOW_ID ? 'AFD' : 'AD') . ',' . ($OPTS{FORCE} ? '!SAVEURL' : 'SAVEURL');
+			if(@result) {
+				my @dt;
+				foreach(@result) {
+					printf STDERR "+ %s AD,SAVEURL %s\n",$hosts, $_;
+					my $newtask = NEW_TASK($task,$task->{namespace},'sites',$hosts,$URL_CMD,$_);
+					push @dt,$newtask;
+				}
+				my $level = 20;
+				if($level) {
+					$task->queue($level,\@dt,1);
+				}	
+				else {
+					$task->queue(\@dt,1);
+				}
+			}
 			if($count > 0) {
 				return $TASK_STATUS->{FINISHED},"Get $count items\n";
 			}
@@ -827,6 +971,7 @@ sub work {
 			$task->{title} = "[urlrule] sites $hosts $CMD $key $info";
 			my $S_BOARD = 'score_urlrule_sites.txt';
 			my @prog = (@USQ_ARGS,"--hosts",$hosts,'--command',$CMD);
+			push @prog,'--force' if($OPTS{FORCE});
 			if($key) {
 				push @prog,'--',$key;
 			}
@@ -853,14 +998,14 @@ sub work {
 						push @{$task->{dir_updated}},[$WD, $_];
 					}
 				}
-				return $TASK_STATUS->{ERROR},$FROMURL . 'Error';
+				return $self->error($task,$FROMURL . 'Error');
 			}
 			else {
-				return $TASK_STATUS->{ERROR},$FROMURL . "Program aborted";
+				return $self->error($task,$FROMURL . "Program aborted");
 			}
 		}
 		#else {
-		#	return $TASK_STATUS->{ERROR},"Invalid command [$CMD]\n";
+		#	return $self->error($task,"Invalid command [$CMD]\n");
 		#}
 	}
 	elsif($type eq 'task') {
@@ -870,19 +1015,19 @@ sub work {
 		my @queries = @_;
 		
 		if(!$action) {
-			return $TASK_STATUS->{ERROR},'No action specified';
+			return $self->error($task,'No action specified');
 		}
 	
 		if(!@queries) {
 			$task->{summary} = 'No query specified';
-			return $TASK_STATUS->{ERROR};
+			return $self->error($task,$task->{summary});
 		}
 	
 		my $URLRULE_TASK_ACTIONS = '^(?:UPDATE|DOWNLOAD|ECHO|DUMP)$';
 		my $CMD = uc($action);
 
 		if($CMD !~ /$URLRULE_TASK_ACTIONS/) {
-			return $TASK_STATUS->{ERROR},"[urlrule task] Invalid action $action";
+			return $self->error($task,"[urlrule task] Invalid action $action");
 		}
 
 		$task->{title} = "[urlrule task] $action " . join(" ",@queries);
@@ -911,7 +1056,7 @@ sub work {
 		my $url = shift;
 		my $level = shift(@_) || 0;
 		my $action = shift(@_) || 'SAVE';
-		if($self->{'no-download'}) {
+		if($self->{options}->{'no-download'}) {
 			$action = 'DATABASE' if($action =~ m/^(?:SAVE|UPDATE|DOWNLOADER|DOWNLOAD)$/i);
 		}
 		$task->{title} = "[urlrule action] $url $level $action";
@@ -945,7 +1090,7 @@ sub work {
 			return $TASK_STATUS->{DONOTHING},'Nothing to do';
 		}
 		else {
-			return $TASK_STATUS->{ERROR},'Error';
+			return $self->error($task,'Error');
 		}
 	}
 }
@@ -1013,7 +1158,7 @@ sub OPTIONS {qw/
 	directory|d=s
 	no-createdir|nc
 	no-recursive|nr
-	no-download
+	no-download|nd
 	fullname
 	include|I:s
 	exclude|X:s

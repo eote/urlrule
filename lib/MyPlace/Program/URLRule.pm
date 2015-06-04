@@ -429,6 +429,10 @@ my %URL_EXPS = (
 		'(?:www\.)moko\.cc\/([^\/]+)',
 		'$1',undef,'moko.cc',
 	],
+	'tieba\.baidu\.com'=>[
+		'tieba\.baidu\.com\/p\/(\d+)',
+		'$1',undef,'post.tieba.baidu.com|tieba.baidu.com',
+	],
 );
 
 sub parse_url {

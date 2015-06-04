@@ -8,7 +8,7 @@ BEGIN {
     $VERSION        = 1.00;
     @ISA            = qw(Exporter);
     @EXPORT         = qw();
-    @EXPORT_OK      = qw(&new_json_data &get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data &expand_url &create_title);
+    @EXPORT_OK      = qw(&new_json_data &get_url &parse_pages &unescape_text &get_html &decode_html &js_unescape &strnum new_html_data &expand_url &create_title &extract_text &html2text);
 }
 use Encode qw/from_to decode encode/;
 use MyPlace::Curl;
@@ -284,9 +284,16 @@ sub unescape_text {
 
 sub create_title {
 	my $title = shift;
+	my $nodir = shift;
 	$title = unescape_text($title);
 	return unless($title);
-	$title =~ s/[<>\?*\:\"\|]+//g;
+	if($nodir) {
+		$title =~ s/[<>\?*\:\"\|\/\\]+/_/g;
+	}
+	else {
+		$title =~ s/[<>\?*\:\"\|]+/_/g;
+	}
+	$title =~ s/__+/_/g;
 	return $title;
 }
 
@@ -308,6 +315,64 @@ sub expand_url {
 		}
 	}
 	return $url;
+}
+
+sub extract_text {
+	my $sortedKeys = shift;
+	my $defs = shift;
+	my %in;
+	my %done;
+	my %r;
+
+		foreach my $k((@$sortedKeys)) {
+			next unless(defined $defs->{$k});
+			next if($done{$k});
+			foreach(@_) {
+				if($in{$k} and m/$defs->{$k}->[1]/i) {
+					push @{$r{$k}},$_;
+					$in{$k} = 0;
+					$done{$k} = 1;
+					last;
+				}
+				elsif($in{$k}) {
+					push @{$r{$k}},$_;
+					next;
+				}
+				elsif(m/$defs->{$k}->[0]/i) {
+					if(!$defs->{$k}->[1]) {
+						$r{$k} = $1 ? $1 : $_;
+						$done{$k} = 1;
+						last;
+					}
+					$in{$k} = 1;
+					push @{$r{$k}},$_;
+					next;
+				}
+			}
+		}	
+	return %r;
+}
+
+sub html2text {
+	my @text = @_;
+	my @r;
+	foreach(@text) {
+		next unless($_);
+		s/[\r\n]+$//;
+		s/<\/?(?:br|td)\s*>/###NEWLINE###/gi;
+		s/<\/p\s*>/###NEWLINE######NEWLINE###/gi;
+		s/\s*<[^>]+>\s*//g;
+		s/###NEWLINE###/\n/g;
+		next unless($_);
+		push @r,$_;
+	}
+	if(wantarray) {
+		return @r;
+	}
+	else {
+		return join("\n",@r);
+	}
+
 }
 
 1;

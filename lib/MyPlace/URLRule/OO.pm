@@ -514,6 +514,49 @@ sub NEW_SAVER {
 	}
 	return MyPlace::Program::Saveurl->new(@SAVE_OPTS);
 }
+	sub write_database {
+		my $self = shift;
+		my $f_urls = shift;
+		my $data = shift;
+		my $count = 0;
+		my $OUTDATE = 1;
+		app_prompt($self->{msghd} . "Write data to database",$f_urls,"\n");
+		my %records;
+		if(-f $f_urls) {
+			if(open FI,'<',$f_urls) {
+				foreach(<FI>) {
+					chomp;
+					$records{$_} = 1;
+				}
+				close FI;
+			}
+			else {
+				app_error($self->{msghd} . "Error reading $f_urls:$!\n");
+				return undef;
+			}
+		}
+		if(open FO,'>>',$f_urls) {
+			foreach(@{$data}) {
+				if($records{$_}) {
+					if(m/weishi\.com|weishi_pic/) {
+						$OUTDATE = 1;
+						last;
+					}
+					next;
+				}
+				print FO $_,"\n";
+				$OUTDATE = 0;
+				$count++;
+			}
+			close FO;
+			app_prompt($self->{msghd}, "$count lines wrote\n");
+			return 1,$count,$OUTDATE;
+		}
+		else {
+			app_error($self->{msghd}, "Error writting $f_urls!\n");
+			return undef;
+		}
+	}
 
 sub do_action {
 	my $self = shift;
@@ -561,40 +604,30 @@ sub do_action {
 		$action =~ s/#URLRULE_TITLE#/$response->{title}/g;
 	}
 	$self->{DATAS_COUNT} = 0 unless(defined $self->{DATAS_COUNT});# ? $self->{DATAS_COUNT} + @$data : @$data;
-	if($action eq 'DOWNLOADER') {
+	if($action eq 'DOWNLOAD') {
 		my $f_urls='urls.lst';
-		app_prompt($self->{msghd} . "Write data to database",$f_urls,"\n");
-		my %records;
-		if(-f $f_urls) {
-			if(open FI,'<',$f_urls) {
-				foreach(<FI>) {
-					chomp;
-					$records{$_} = 1;
-				}
-				close FI;
-			}
-			else {
-				app_error($self->{msghd} . "Error reading $f_urls:$!\n");
-				return undef;
-			}
+		my ($status,$count,$OUTDATE) = $self->write_database($f_urls,$data);
+		return $status unless($status);
+		use MyPlace::Program::Downloader;
+		$self->{DATAS_COUNT} += $count;
+		if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
+			$self->outdated();
+			return $count;
 		}
-		my $count = 0;
-		my $OUTDATE = 1;
-		if(open FO,'>>',$f_urls) {
-			foreach(@{$data}) {
-				if($records{$_}) {
-					if(m/weishi\.com|weishi_pic/) {
-						$OUTDATE = 1;
-						last;
-					}
-					next;
-				}
-				print FO $_,"\n";
-				$OUTDATE = 0;
-				$count++;
-			}
-			close FO;
-			app_prompt($self->{msghd}, "$count lines wrote\n");
+		my $mpd = new MyPlace::Program::Downloader;
+		$mpd->execute(
+			'--title'=>$response->{title},
+			'--no-queue',
+			'--include'=>$self->{request}->{include},
+			'--exclude'=>$self->{request}->{exclude},
+			@$data,
+		);
+		return $count;
+	}
+	elsif($action eq 'DOWNLOADER') {
+			my $f_urls='urls.lst';
+			my ($status,$count,$OUTDATE) = $self->write_database($f_urls,$data);
+			return $status unless($status);
 			use MyPlace::Program::Downloader;
 			my $mpd = new MyPlace::Program::Downloader;
 			$mpd->execute(
@@ -605,13 +638,10 @@ sub do_action {
 				'--exclude'=>$self->{request}->{exclude},
 			);
 			$self->{DATAS_COUNT} += $count;
-			$self->outdated() if($OUTDATE);
+			if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
+				$self->outdated();
+			}
 			return $count;
-		}
-		else {
-			app_error($self->{msghd} . "Error writing $f_urls:$!\n");
-			return undef;
-		}
 	}
 	if($action eq 'DATABASE') {
 		my $dbfile = $file || 'urls.lst';
@@ -701,7 +731,7 @@ sub do_action {
 	elsif($action eq 'SAVE') {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
 		$PROGRAM_SAVE ||= $self->NEW_SAVER;
-		$PROGRAM_SAVE->setOptions('--hisotry');
+		$PROGRAM_SAVE->setOptions('--history');
 		$PROGRAM_SAVE->setOptions('--referer',$base) if($base);
 		$PROGRAM_SAVE->addTask(@{$data});
 		$PROGRAM_SAVE->execute();

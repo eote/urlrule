@@ -21,6 +21,7 @@ my @OPTIONS = qw/
 		help|h
 		manual|man
 		list|l
+		force
 		debug|d
 		database|hosts|sites|db=s
 		command|c:s
@@ -38,6 +39,7 @@ my @OPTIONS = qw/
 		no-download
 		include|I:s
 		exclude|X:s
+		force-action|fa
 /;
 
 sub new {
@@ -139,8 +141,8 @@ sub do_action {
 	use MyPlace::URLRule::OO;
 	my ($count,$r,@request) = $self->get_request(@target);
 	my $idx = 0;
-    use Data::Dumper;
-    print STDERR Data::Dumper->Dump([$OPTS],qw/*OPTS/),"\n";
+#    use Data::Dumper;
+#   print STDERR Data::Dumper->Dump([$OPTS],qw/*OPTS/),"\n";
 	my $URLRULE = new MyPlace::URLRule::OO(
 			'action'=>$action,
 			'thread'=>$OPTS->{thread},
@@ -177,7 +179,7 @@ sub do_downloader {
 
 	my %r;
 	
-	if($OPTS->{'no-download'}) {
+	if((!$OPTS->{force}) and $OPTS->{'no-download'}) {
 		return $self->do_action('DATABASE',@target);
 	}	
 	$self->do_action('DATABASE',@target);
@@ -186,7 +188,9 @@ sub do_downloader {
 	my $DL = new MyPlace::Program::Downloader;
 	my @DLOPT = qw/--quiet --input urls.lst/;
 	push @DLOPT,"--recursive" if($OPTS->{recursive});
-	push @DLOPT,"--retry" unless($OPTS->{'no-retry'});
+	#push @DLOPT,"--retry" unless($OPTS->{'no-retry'});
+	push @DLOPT,"--retry" if($OPTS->{retry});
+	#unless($OPTS->{'no-retry'});
 	push @DLOPT,'--include',$OPTS->{include} if($OPTS->{include});
 	push @DLOPT,'--exclude',$OPTS->{exclude} if($OPTS->{exclude});
 	
@@ -233,7 +237,7 @@ sub do_downloader {
 sub do_update {
 	my $self = shift;
 	my $cmd = shift(@_) || "UPDATE";
-	if($self->{options}->{'no-download'}) {
+	if((!$self->{options}->{force}) and $self->{options}->{'no-download'}) {
 		$cmd = 'DATABASE' if($cmd =~ m/^(?:SAVE|UPDATE|DOWNLOADER|DOWNLOAD)$/i);
 	}
 	unshift @_,$self,$cmd;
@@ -335,8 +339,10 @@ sub do_saveurl {
 			return $EXIT_CODE{FAILED};
 		}
 		use MyPlace::URLRule::OO;
+		my $action = $OPTS->{'force'} ? 'DOWNLOAD' : $OPTS->{'no-download'} ? 'DATABASE' : 'DOWNLOAD';
+		$action = '!' . $action  if($OPTS->{'force-action'});
 		my $URLRULE = new MyPlace::URLRule::OO(
-				'action'=>$OPTS->{'no-download'} ? 'DATABASE' : 'DOWNLOADER',
+				'action'=>$action,
 				'thread'=>$OPTS->{thread},
 				'createdir'=>$OPTS->{createdir},
 				'include'=>$OPTS->{include},

@@ -70,7 +70,7 @@ sub load_rule {
 	my $status;
 	my $retry = 1;
 	while(1) {
-		$status = $RULE->autoApply($url,$level,$action,$title,$progress);
+		($status,undef) = $RULE->autoApply($url,$level,$action,$title,$progress);
 		last if($status);
 		last if($retry > 3);
 		$MSG->warning("[$retry/3] Retry in 3 seconds ...\n");
@@ -135,6 +135,7 @@ sub getcwd {
 	directory|d=s
 	fullname
 	thread
+	force|f
 /;
 if(@ARGV) {
 	require Getopt::Long;
@@ -180,6 +181,7 @@ $RULE = new MyPlace::URLRule::OO(
 		createdir=>1,
 		callback_nextlevels=>\&process_passdown,
 		thread=>$OPTS{thread},
+		force=>$OPTS{force},
 		options=>{
 			fullname=>$OPTS{fullname},
 		},
