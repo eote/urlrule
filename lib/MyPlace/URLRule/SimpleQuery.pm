@@ -160,7 +160,25 @@ sub item {
 	if(!$dbname) {
 		$dbname = (keys %{$self->{db}})[0];
 	}
-	return $self->{db}->{$dbname}->item($idName);
+	return $self->{db}->{$dbname}->item($idName,@_);
+}
+
+sub find_item {
+	my $self = shift;
+	my $idName = shift;
+	my $dbname = shift;
+	if(!$dbname) {
+		$dbname = (keys %{$self->{db}})[0];
+	}
+	return $self->{db}->{$dbname}->find_item(undef,$idName,@_);
+}
+sub find_items {
+	my $self = shift;
+	my $dbname = shift;
+	if(!$dbname) {
+		$dbname = (keys %{$self->{db}})[0];
+	}
+	return $self->{db}->{$dbname}->find_items(@_);
 }
 
 sub query {

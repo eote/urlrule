@@ -1,21 +1,23 @@
 package MyPlace::URLRule::OO;
-our $VERSION = 'v2.0';
+#our $VERSION = 'v2.0';
 
 use MyPlace::URLRule qw/parse_rule apply_rule @URLRULE_LIB get_rule_handler/;
- 
 use strict;
 use warnings;
 use Cwd qw//;
 use MyPlace::Script::Message;
 use File::Basename;
+use Pod::Usage;
+use MyPlace::Program::Batchget;
 use MyPlace::Program::Saveurl;
+use File::Spec;
 #use Encode qw/decode_utf8 encode_utf8 find_encoding/;
 use utf8;
 #my $UTF8 = find_encoding("utf-8");
 my $PROGRAM_SAVE;
 
 sub getcwd {
-	goto &Cwd::getcwd;
+	goto &Cwd::cwd;
 	#return $UTF8->decode(Cwd::getcwd());
 }
 
@@ -31,6 +33,22 @@ sub lib {
 
 sub short_wd {
 	my $full = shift;
+	my $l = length($full);
+	if($l > 60) {
+		my @dirs = File::Spec->splitdir($full);
+		my @sdir;
+		my $level = 3;
+		while(@dirs) {
+			last if($level < 1);
+			my $d = pop @dirs;
+			unshift @sdir,$d;
+			$level--;
+		}
+		return File::Spec->catdir(@sdir);
+	}
+	else {
+		return $full;
+	}
 	my $base = shift;
 	$base =~ s/[^\/]+$//;
 	if($base) {
@@ -96,8 +114,9 @@ sub progress {
 	my $text = "";
 	foreach my $idx(reverse 0 .. 100) {
 		if($self->{levels}->{"count" . $idx}) {
+
 			$text  = $text . "[" . 
-				$self->{levels}->{"done" . $idx} .
+				($self->{levels}->{"done" . $idx}  || "0").
 				"/" .
 				$self->{levels}->{"count" . $idx} .
 				"]";
@@ -139,6 +158,9 @@ sub applyRule {
 	if(!$handler) {
 		return 0,{error=>"No handler found for $rule->{url}"},$rule;
 	}
+	elsif($handler->{error}) {
+		return 0, {error=>$handler->{error}},$rule;
+	}
 	if($request->{options}) {
 		$handler->{options} = $request->{options};
 	}
@@ -173,7 +195,7 @@ sub aa_apply_rule {
 		}
 	}
 	app_prompt($self->{msghd} . 'URL' , $rule->{url},"\n");
-    app_prompt($self->{msghd} . "Directory",short_wd(getcwd,$self->{startwd}),"\n");
+    app_prompt($self->{msghd} . "Directory",short_wd(getcwd(),$self->{startwd}),"\n");
 	my ($status,$result) = $self->applyRule($rule,$res);
 	if(!$status) {
 		if($result->{error}) {
@@ -379,6 +401,14 @@ sub autoApply {
 			else {
 				foreach my $req (@requests) {
 					my(undef,@r) = $self->processNextLevel($req);
+					if($rule->{url} =~ m/weibo\.com/) {
+						my $sec = 10;
+						app_error(
+							$self->{msghd},
+							"Program will sleep for $sec seconds, avoiding blocked by weibo.com\n"
+						);
+						sleep $sec;
+					}
 					if(@r) {
 						push @DATAS,@r;
 					}
@@ -514,6 +544,49 @@ sub NEW_SAVER {
 	}
 	return MyPlace::Program::Saveurl->new(@SAVE_OPTS);
 }
+
+our @DOMAINS = (
+	['v.weipai.cn','oldvideo.qiniudn.com'],
+	['aliv3.weipai.cn', 'aliv.weipai.cn'],
+);
+
+sub DUP_URL {
+	my $url = shift;
+	my @r;
+	my $lurl = $url;
+	my $prefix;
+	my $domain;
+	my $suffix;
+	if($lurl =~ m/^([a-z]+:\/\/)([^\/]+)(.*)$/) {
+		$prefix = $1;
+		$domain = lc($2);
+		$suffix = $3;
+	}
+	else {
+		return ($url);
+	}
+	foreach (@DOMAINS) {
+		my $match = 0;
+		foreach my $d(@$_) {
+			if(lc($d) eq $domain) {
+				$match = 1;
+				last;
+			}
+		}
+		if($match) {
+			foreach my $d(@$_) {
+				push @r, $prefix . $d . $suffix;
+			}
+			last;
+		}
+	}
+	if(@r) {
+		#	print STDERR "[DUPURL] $url =>\n";
+		#print STDERR "\t" . join("\n\t",@r) . "\n";
+		return @r;
+	}	
+	return ($url);
+}
 	sub write_database {
 		my $self = shift;
 		my $f_urls = shift;
@@ -526,9 +599,12 @@ sub NEW_SAVER {
 			if(open FI,'<',$f_urls) {
 				foreach(<FI>) {
 					chomp;
-					$records{$_} = 1;
+					my @urls = DUP_URL($_);
+					@records{(@urls)} = (1,1,1,1,1,1,1,1,1,1);
 				}
 				close FI;
+				#use Data::Dumper;
+				#print Data::Dumper->Dump([\%records],['*records']),"\n";
 			}
 			else {
 				app_error($self->{msghd} . "Error reading $f_urls:$!\n");
@@ -547,9 +623,10 @@ sub NEW_SAVER {
 				print FO $_,"\n";
 				$OUTDATE = 0;
 				$count++;
+				print STDERR "    + [$count]$_\n";
 			}
 			close FO;
-			app_prompt($self->{msghd}, "$count lines wrote\n");
+			app_warning($self->{msghd}, "$count lines wrote\n");
 			return 1,$count,$OUTDATE;
 		}
 		else {
@@ -645,52 +722,14 @@ sub do_action {
 	}
 	if($action eq 'DATABASE') {
 		my $dbfile = $file || 'urls.lst';
-		app_prompt($self->{msghd} . "Write data to database",$dbfile,"\n");
-		my %records;
-		if(-f $dbfile) {
-			if(open FI,'<',$dbfile) {
-				foreach(<FI>) {
-					chomp;
-					$records{$_} = 1;
-				}
-				close FI;
-			}
-			else {
-				app_error($self->{msghd} . "Error reading $dbfile:$!\n");
-				return undef;
-			}
+		my ($status,$count,$OUTDATE) = $self->write_database($dbfile,$data);
+		return $status unless($status);
+		#app_prompt($self->{msghd} . "Write $count lines to",$dbfile,"\n");
+		$self->{DATAS_COUNT} += $count;
+		if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
+			$self->outdated();
 		}
-		my $count = 0;
-		my $OUTDATE = 1;
-		my $idx = 0;
-		if(open FO,'>>',$dbfile) {
-			foreach(@{$data}) {
-				if($records{$_}) {
-					if(m/weishi\.com|weishi_pic/) {
-						$OUTDATE = 1;
-						last;
-					}
-					next;
-				}
-				$idx++;
-				print STDERR "[$idx] $_\n";
-				print FO $_,"\n";
-				$OUTDATE = 0;
-				$count++;
-			}
-			close FO;
-			app_prompt($self->{msghd} . "Write $count lines to",$dbfile,"\n");
-			$self->{DATAS_COUNT} += $count;
-			#$self->{DATAS_COUNT} - @$data + @KEEPS;
-			if((!$ACTION_MODE{FORCE}) and $OUTDATE) {
-				$self->outdated();
-			}
-			return $count;
-		}
-		else {
-			app_error($self->{msghd} . "Error writing $dbfile:$!\n");
-			return undef;
-		}
+		return $count;
 	}
     elsif($action eq 'FILE') {
 		app_prompt($self->{msghd} . 'Writes file',$file,"\n");
@@ -786,16 +825,14 @@ sub do_action {
 	}
     elsif($action) {
 		app_prompt($self->{msghd} . 'Action',"$action\n");
-        my $childpid = open FO,"|-",$action;
-#		print STDERR "Childpid:$childpid\n";
-		if($childpid) {
-			print FO join("\n",@{$data}),"\n";
-			close FO;
-			waitpid($childpid,0);
-		}
-		else {
-			exit 0;
-		}
+	        if(open FO,"|-",$action) {
+				print FO join("\n",@{$data}),"\n";
+				close FO;
+			}
+			else {
+				app_error($self->{msghd} . "Error process action <$action> : $!\n");
+				return;
+			}
     }
     else {
         print $_,"\n" foreach(@{$data});

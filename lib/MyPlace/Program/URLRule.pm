@@ -22,7 +22,9 @@ sub OPTIONS {qw/
 	help|h|? 
 	manual|man
 	hosts=s
+	no-hosts|nh
 	database|db
+	no-database|ndb
 	all|a
 	thread=i
 	retry
@@ -72,10 +74,29 @@ sub DB_INIT {
 	my $self = shift;
 	my %OPTS = %{$self->{OPTS}};
 	return if($OPTS{url});
-	$OPTS{all} = 1 unless($OPTS{hosts} or $OPTS{database});
+
+	if(!($OPTS{hosts} or defined $OPTS{database})) {
+		$OPTS{all} = 1 unless($OPTS{'no-database'});
+	}
 	if($OPTS{all}) {
 		$OPTS{hosts} = $OPTS{hosts} || "*";
 		$OPTS{database} = $OPTS{database} || "";
+	}
+	if($OPTS{'no-database'} and $OPTS{'no-hosts'}) {
+		print STDERR "Error: --no-hosts and --no-database both specified\n";
+		return $self;
+	}
+	if($OPTS{'no-database'}) {
+		delete $OPTS{database};
+		$OPTS{hosts} = $OPTS{hosts} || "*";
+	}
+	if($OPTS{'no-hosts'}) {
+		delete $OPTS{hosts};
+		$OPTS{database} = $OPTS{database} || "";
+	}
+	if(not($OPTS{hosts} or defined $OPTS{database})) {
+		print STDERR "Error: no --hosts or --database specified\n";
+		return $self;
 	}
 	if(defined($OPTS{hosts})) {
 		$self->{USQ} = MyPlace::URLRule::SimpleQuery->new();
@@ -433,6 +454,30 @@ my %URL_EXPS = (
 		'tieba\.baidu\.com\/p\/(\d+)',
 		'$1',undef,'post.tieba.baidu.com|tieba.baidu.com',
 	],
+	'\d+\.qzone\.qq\.com' => [
+		'(\d+)\.qzone\.qq\.com',
+		'$1',undef,'qzone.qq.com',
+	],
+	'user\.qzone\.qq\.com\/\d+' => [
+		'user\.qzone\.qq\.com\/(\d+)',
+		'$1',undef,'qzone.qq.com',
+	],
+	'home\.51\.com\/' => [
+		'home\.51\.com\/([^\/]+)',
+		'$1',undef,'home.51.com',
+	],
+	'[^\.]+\.taobao\.com' => [
+		'([^\.]+)\.taobao\.com',
+		'$1',undef,'shop.taobao.com',
+	],
+	'[^\.]+\.poco\.cn'=> [
+		'([^\.]+)\.poco\.cn',
+		'$1',undef,'poco.cn',
+	],
+	'blog\.sina\.com\.cn\/'=> [
+		'blog\.sina\.com\.cn\/([^?&]+)',
+		'$1',undef,'blog.sina.com.cn',
+	],
 );
 
 sub parse_url {
@@ -443,7 +488,7 @@ sub parse_url {
 		next unless($url =~ m/^https?:\/\/$site|^$site/);
 		my($exp,$r1,$r2,$r3) = @{$URL_EXPS{$site}};
 		next unless($exp);
-		if($url =~ m/$exp/) {
+		if($url =~ m/https?:\/\/$exp/) {
 			$result{profile} = eval("\"$r1\"") if($r1);
 			$result{uname} = eval("\"$r2\"") if($r2);
 			$result{host} = eval("\"$r3\"") if($r3);
@@ -477,24 +522,26 @@ sub CMD_ADD {
 		$id = $name;
 		$name = '';
 	}
-	my ($r,$result) = parse_url($id);
-	if($r) {
-		if($result->{profile}) {
-			p_msg "ID => $result->{profile}\n";
-			$id = $result->{profile};
+	if(!$host) {
+		my ($r,$result) = parse_url($id);
+		if($r) {
+			if($result->{profile}) {
+				p_msg "ID => $result->{profile}\n";
+				$id = $result->{profile};
+			}
+			if($result->{uname} and !$name) {
+				p_msg "NAME => $result->{uname}\n";
+				$name = $result->{uname};
+			}
+			if($result->{host} and !$host) {
+				p_msg "HOST => $result->{host}\n";
+				$host = $result->{host};
+				$OPTS->{hosts} = $host if(!$OPTS->{hosts});
+			}
 		}
-		if($result->{uname} and !$name) {
-			p_msg "NAME => $result->{uname}\n";
-			$name = $result->{uname};
+		else {
+			die($result . "\n");
 		}
-		if($result->{host} and !$host) {
-			p_msg "HOST => $result->{host}\n";
-			$host = $result->{host};
-			$OPTS->{hosts} = $host if(!$OPTS->{hosts});
-		}
-	}
-	else {
-		die($result . "\n");
 	}
 
 	if(defined $OPTS->{hosts}	or defined $OPTS->{all}) {

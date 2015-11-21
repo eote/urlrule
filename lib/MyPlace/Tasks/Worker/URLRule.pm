@@ -6,7 +6,7 @@ use parent 'MyPlace::Tasks::Worker';
 use MyPlace::Weipai;
 use MyPlace::Tasks::Task qw/$TASK_STATUS/;
 use MyPlace::Script::Message;
-use MyPlace::Program::SimpleQuery;
+use MyPlace::Program::SimpleQuery qw/validate_item/;
 use MyPlace::URLRule::Utils qw/get_url/;
 use File::Spec::Functions qw/catfile catdir/;
 use MyPlace::Program qw/EXIT_CODE/;
@@ -300,7 +300,9 @@ sub work {
 		no-createdir
 		fullname
 		no-download
+		item
 	/);
+
 	my @USQ_OPTS_GROUP2 = (qw/
 		include
 		execlude
@@ -401,7 +403,7 @@ sub work {
 			$task->{summary} = 'No action assicated';
 			return $self->error($task,$task->{summary});
 		}
-		#$hosts_o = 'weipai.cn,vlook.cn,meipai.com,miaopai.com' if($hosts_o eq '*');
+		$hosts_o = 'weipai.cn,vlook.cn,meipai.com,miaopai.com,weibo.com,moko.cc' if($hosts_o eq '*');
 		my ($hosts,@HOSTS_NEXT) = split(/\s*[,\|]\s*/,$hosts_o);
 
 		if(@HOSTS_NEXT) {
@@ -453,7 +455,17 @@ sub work {
 			unshift @CMDS_NEXT,@CC;
 		}
 
-
+		if($CMD eq '!UPDATE') {
+			if(lc($hosts) =~ m/weipai.cn|vlook.cn|meipai.com|miaopai.com/) {
+				$CMD = '!DOWNLOADER';
+			}
+			else {
+				$CMD = 'DOWNLOADER';
+			}
+		}
+		elsif($CMD eq 'UPDATE') {
+			$CMD = 'DOWNLOADER';
+		}
 
 		
 		my $FROMURL = "";
@@ -540,6 +552,7 @@ sub work {
 			else {
 				unshift @_,$id,$name;
 			}
+			return $TASK_STATUS->{DONOTHING} unless(validate_item($id,$name));
 		}
 
 		if($CMD =~ m/^!(.+)$/) {
@@ -609,8 +622,9 @@ sub work {
 				return $self->error($task,"No URL specified");
 			}
 			$task->{title} = "[urlrule] sites $hosts SAVEURL $URL $id $name";
-			push @USQ_ARGS,'--force';
-			push @USQ_ARGS,'--force-action';# if($OPTS{FORCE});
+			push @USQ_ARGS,'--force' if($OPTS{FORCE});
+			#push @USQ_ARGS,'--force';
+			#push @USQ_ARGS,'--force-action';# if($OPTS{FORCE});
 			my($exitval,$r) = $USQ->execute(@USQ_ARGS,'--hosts',$hosts,'--saveurl',$URL,($id or $name));
 			if($exitval == 0) {
 				if($r and $r->{directory}) {
@@ -875,6 +889,7 @@ sub work {
 						print STDERR " \t=> " . scalar(@{$likes->{video_list}}) . " liked video items\n";
 					}
 					foreach(@{$likes->{video_list}}) {
+						next unless(ref $_);
 						foreach my $key(qw/video_desc nickname video_id video_desc user_id video_play_url date/) {
 							$_->{$key} = '' unless(defined $_->{$key});
 						}

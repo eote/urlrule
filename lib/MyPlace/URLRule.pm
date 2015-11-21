@@ -4,6 +4,7 @@ sub new {
 	my $class = shift;
 	return bless {url=>'',level=>'',action=>''},$class;
 }
+1;
 
 package MyPlace::URLRule;
 use URI;
@@ -16,10 +17,24 @@ use strict;
 BEGIN {
     use Exporter ();
     our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
-	$VERSION = 'v2.0';
-    @ISA            = qw(Exporter);
-	@EXPORT			=	qw/&parse_rule &apply_rule &set_callback get_rule_handler/;
-    @EXPORT_OK         = qw(@URLRULE_LIB $URLRULE_DIRECTORY &urlrule_quick_parse &parse_rule &apply_rule &get_domain &get_rule_dir set_callback get_rule_handler &locate_file);
+	$VERSION	= 'v2.0';
+    @ISA        = qw(Exporter);
+	@EXPORT		=	qw/&parse_rule &apply_rule &set_callback get_rule_handler/;
+    @EXPORT_OK  = qw/
+			@URLRULE_LIB
+			$URLRULE_DIRECTORY
+			urlrule_quick_parse
+			parse_rule
+			apply_rule
+			get_domain
+			get_rule_dir
+			set_callback
+			get_rule_handler
+			locate_file
+			get_rule
+			get_handler
+			request
+	/;
 }
 
 #my $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
@@ -28,12 +43,16 @@ our $USER_URLRULE_DIRECTORY = "$ENV{HOME}/.urlrule";
 our $URLRULE_DIRECTORY = "$ENV{XR_PERL_SOURCE_DIR}/urlrule";
 our @URLRULE_LIB = (getcwd . "/urlrule",$USER_URLRULE_DIRECTORY,$URLRULE_DIRECTORY);
 
-
-unshift @INC,@URLRULE_LIB;
+our $Config;
+#unshift @INC,@URLRULE_LIB;
 foreach(@URLRULE_LIB) {
-	require "$_/config.pm" if(-f "$_/config.pm");
+	if(-f "$_/config.pm") {
+		#print STDERR "Loading $_/config.pm\n";
+		require "$_/config.pm";
+	}
 }
-my $Config = $MyPlace::URLRule::Config || {'maps.domain'=>{}};
+$Config ||= {'maps.domain'=>{}};
+#use Data::Dumper;die Data::Dumper->Dump([$Config],['*Config']),"\n";
 
 my %CALLBACK;
 
@@ -190,6 +209,8 @@ sub parse_rule {
     return \%r;
 }
 
+
+
 sub get_passdown {
 	my $result = shift;
 
@@ -292,11 +313,11 @@ sub get_rule_handler {
 		$info = parse_rule(@_);
 	}
 	if(!($info || ref $info || %{$info})) {
-		return {error=>'Rule not defined'},undef;
+		return {error=>'Rule not defined'};#,undef;
 	}
 	my $source = $info->{source};
 	if(!-f $source) {
-		return {error=>"Rule not defined:$source"},undef;
+		return {error=>"Rule not defined:$source"};#,undef;
 	}
 	my $id = $source;
 	if($CACHED_RULE{$id}) {
@@ -367,6 +388,45 @@ sub get_rule_handler {
 	return $rule;
 }
 
+sub get_rule {
+	goto &parse_rule;
+}
+
+sub get_handler {
+	my $rule = shift;
+	if(!ref $rule) {
+		$rule = get_rule($rule,@_);
+	}
+	if(ref $rule) {
+		return get_rule_handler($rule,@_);
+	}
+	else {
+		return {error=>"No handler found!"};
+	}
+}
+
+sub request {
+	my $arg1 = shift;
+	my @args = @_;
+	my $rule;
+	if(!ref $arg1) { 
+		$rule = parse_rule($arg1,@args);
+		@args = ();
+	}
+	else {
+		$rule = $arg1;
+	}
+	my $handler = get_handler($rule);
+	if($handler->{error}) {
+		print STDERR "Error: ",$handler->{error},"\n";
+		return 0;
+	}
+#	my $request = $rule;
+	my $request = (@args > 0) ? parse_rule(@args) : $rule;
+	return $handler->apply(@$request{qw/url level action/});
+}
+
+
 sub apply_rule {
     my $rule = shift;
     unless($rule and ref $rule and %{$rule}) {
@@ -374,7 +434,7 @@ sub apply_rule {
     }
 	my $handler = get_rule_handler($rule);
 	if($handler->{error}) {
-		print STDERR $handler->{error},"\n";
+		print STDERR "Error: ",$handler->{error},"\n";
 		return 0;
 	}
 	return $handler->apply($rule->{url},$rule->{level},$rule->{action});
@@ -507,6 +567,32 @@ sub urlrule_quick_parse {
         %args,
     );
 }
+
+sub new {
+	my $class = shift;
+	my $self = bless {},$class;
+	$self->rule(@_);
+	return $self;
+}
+
+sub process {
+	my $self = shift;
+	if(!$self->{default_rule}) {
+		$self->rule(@_);
+	}
+	my $rule = $self->{default_rule};
+	return request($rule,@_);
+}
+
+sub rule {
+	my $self = shift;
+	delete $self->{default_rule};
+	return unless(@_);
+	$self->{default_rule} = get_rule(@_);
+	return $self->{default_rule};
+}
+
+
 1;
 
 package MyPlace::MyPlace::RuleBridge::Object;

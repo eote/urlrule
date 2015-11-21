@@ -13,7 +13,6 @@ BEGIN {
 use Encode qw/from_to decode encode/;
 use MyPlace::Curl;
 
-
 my $cookie = $ENV{HOME} . "/.curl_cookies.dat";
 my $cookiejar = $ENV{HOME} . "/.curl_cookies2.dat";
 my $curl = MyPlace::Curl->new(
@@ -244,24 +243,24 @@ sub unescape_text {
     my %ESCAPE_MAP = (
         "&lt;","<" ,"&gt;",">",
         "&amp;","&" ,"&quot;","\"",
-        "&agrave;","à" ,"&Agrave;","À",
-        "&acirc;","â" ,"&auml;","ä",
-        "&Auml;","Ä" ,"&Acirc;","Â",
-        "&aring;","å" ,"&Aring;","Å",
-        "&aelig;","æ" ,"&AElig;","Æ" ,
-        "&ccedil;","ç" ,"&Ccedil;","Ç",
-        "&eacute;","é" ,"&Eacute;","É" ,
-        "&egrave;","è" ,"&Egrave;","È",
-        "&ecirc;","ê" ,"&Ecirc;","Ê",
-        "&euml;","ë" ,"&Euml;","Ë",
-        "&iuml;","ï" ,"&Iuml;","Ï",
-        "&ocirc;","ô" ,"&Ocirc;","Ô",
-        "&ouml;","ö" ,"&Ouml;","Ö",
-        "&oslash;","ø" ,"&Oslash;","Ø",
-        "&szlig;","ß" ,"&ugrave;","ù",
-        "&Ugrave;","Ù" ,"&ucirc;","û",
-        "&Ucirc;","Û" ,"&uuml;","ü",
-        "&Uuml;","Ü" ,"&nbsp;"," ",
+        "&agrave;","à" ,"&Agrave;","à",
+        "&acirc;","a" ,"&auml;","?",
+        "&Auml;","?" ,"&Acirc;","?",
+        "&aring;","?" ,"&Aring;","?",
+        "&aelig;","?" ,"&AElig;","?" ,
+        "&ccedil;","?" ,"&Ccedil;","?",
+        "&eacute;","é" ,"&Eacute;","é" ,
+        "&egrave;","è" ,"&Egrave;","è",
+        "&ecirc;","ê" ,"&Ecirc;","ê",
+        "&euml;","?" ,"&Euml;","?",
+        "&iuml;","?" ,"&Iuml;","?",
+        "&ocirc;","?" ,"&Ocirc;","?",
+        "&ouml;","?" ,"&Ouml;","?",
+        "&oslash;","?" ,"&Oslash;","?",
+        "&szlig;","?" ,"&ugrave;","ù",
+        "&Ugrave;","ù" ,"&ucirc;","?",
+        "&Ucirc;","?" ,"&uuml;","ü",
+        "&Uuml;","ü" ,"&nbsp;"," ",
         "&copy;","\x{00a9}",
         "&reg;","\x{00ae}",
         "&euro;","\x{20a0}",
@@ -284,16 +283,23 @@ sub unescape_text {
 
 sub create_title {
 	my $title = shift;
-	my $nodir = shift;
+	my $ext = shift;
+	$title =~ s/\s*<[^>]+>\s*//g;
 	$title = unescape_text($title);
 	return unless($title);
-	if($nodir) {
+	$ext = 0 unless(defined $ext);
+	if($ext == 0) {
 		$title =~ s/[<>\?*\:\"\|\/\\]+/_/g;
 	}
 	else {
 		$title =~ s/[<>\?*\:\"\|]+/_/g;
 	}
-	$title =~ s/__+/_/g;
+	$title =~ s/-|－|【|】|\[|\]|\[|\]|\(|\)|\（|\）|\［|\］/_/g if($ext == 1);
+#	$title =~ tr'靠[][]()靠靠'________';
+	$title =~ s/^\s*_+\s*//;
+	$title =~ s/\s*_+\s*$//;
+	$title =~ s/\s*__+\s*/_/g;
+	$title =~ s/^\[?www\.\w+\.\w+\]?//;
 	return $title;
 }
 

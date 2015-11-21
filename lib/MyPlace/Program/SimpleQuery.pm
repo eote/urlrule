@@ -1,11 +1,21 @@
 #!/usr/bin/perl -w
 package MyPlace::Program::SimpleQuery;
+BEGIN {
+    require Exporter;
+    our ($VERSION,@ISA,@EXPORT,@EXPORT_OK,%EXPORT_TAGS);
+    $VERSION        = 1.10;
+    @ISA            = qw(Exporter);
+    @EXPORT         = qw();
+    @EXPORT_OK      = qw(&validate_item &show_directory);
+}
 use strict;
 use warnings;
 use File::Spec::Functions qw/catfile/;
 use Getopt::Long;
 use MyPlace::URLRule::SimpleQuery;
 use Getopt::Long qw/GetOptionsFromArray/;
+use MyPlace::Script::Message;
+
 
 my %EXIT_CODE = qw/
 	OK			0
@@ -40,6 +50,7 @@ my @OPTIONS = qw/
 		include|I:s
 		exclude|X:s
 		force-action|fa
+		item
 /;
 
 sub new {
@@ -94,13 +105,51 @@ sub do_list {
 	return $EXIT_CODE{OK};
 }
 
-sub check_trash {
-	my $path = shift;
-	foreach('#Empty','#Trash') {
-		my $dir = $_ . "/" . $path;
-		if(-d $dir) {
-			print STDERR "[$path] in [$_] IGNORED!\n";
+sub validate_item {
+
+	my @teststr;
+	foreach(@_) {
+		push @teststr,$_ if(defined $_);
+	}
+	my $testname = join(" ",@teststr);
+	my $result = 1;
+	return 1 unless(@teststr);
+
+	foreach(@teststr) {
+		next if(!$_);
+		if(m/^#Trash/i) {
+			&app_error("[$testname] in catalog <#Trash>, Ignored\n");
 			return undef;
+		}
+	}
+
+
+
+	my %TRASHED;
+	if(open FI,'<','#TRASH.txt') {
+		foreach(<FI>) {
+			chomp;
+			s/\/+$//;
+			$TRASHED{$_} = 1;
+		}
+		close FI;
+	}
+
+	foreach(@teststr) {
+		s/\/+$//;
+		if(defined $TRASHED{$_}) {
+			&app_error("[$testname] in file <#TRASH.txt>, Ignored.\n");
+			return undef;
+		}
+	}
+
+	foreach('#Empty','#Trash') {
+		foreach my $path(@teststr) {
+			my $dir = $_ . "/" . $path;
+			if(-d $dir) {
+				print STDERR "[$testname] in directory [$_], Ignored.\n";
+				return undef;
+			}
 		}
 	}
 	return 1;
@@ -115,16 +164,16 @@ sub get_request {
 	foreach(@target) {
 		my @rows = @$_;
 		my $host = shift(@rows) || '*';
-		foreach my $item(@rows) {
-			next unless($item && @{$item});
+		foreach my $item(filter_items(@rows)) {
+			next unless($item && ref $item && @{$item});
 			my $dbname = $item->[4] || $host;
 			my $title = $OPTS->{createdir} ? $item->[1] . "/$dbname/" : "";
-			next unless(check_trash($title));
 			push @request,{
 				count=>1,
 				level=>$item->[3],
 				url=>$item->[2],
 				title=>$title,
+				root_dir=>$item->[1],
 			};
 			push @{$r{directory}},$title if($title);
 			$count++;
@@ -132,12 +181,24 @@ sub get_request {
 	}
 	return $count,\%r,@request;
 }
+sub show_directory {
+	my $dir = shift;
+	if(-l $dir) {
+		my $link = readlink($dir);
+		print STDERR "\n";
+		&app_message2("Working in directory: $dir (symbol link)\n\t=>$link\n");
+	}
+	else {
+		print STDERR "\n";
+		&app_message2("Working in directory: $dir\n");
+	}
+}
 
 sub do_action {
 	my $self = shift;
 	my $action = shift;
-	my @target = @_;
 	my $OPTS = $self->{options};
+	my @target = @_;
 	use MyPlace::URLRule::OO;
 	my ($count,$r,@request) = $self->get_request(@target);
 	my $idx = 0;
@@ -156,6 +217,9 @@ sub do_action {
 	foreach(@request) {
 		$idx++;
 		$_->{progress} = "[$idx/$count]";
+		if($_->{root_dir}) {
+			show_directory($_->{root_dir});
+		}
 		$URLRULE->autoApply($_);
 		$URLRULE->reset();
 	}
@@ -168,6 +232,19 @@ sub do_action {
 }
 
 sub do_search {
+}
+sub filter_items {
+	my @items;
+	foreach my $item(@_) {
+		if(ref $item) {
+			next unless(validate_item($item->[0],$item->[1]));	
+		}
+		else {
+			next unless(validate_item($item));
+		}
+		push @items,$item;
+	}
+	return @items;
 }
 
 sub do_downloader {
@@ -198,11 +275,10 @@ sub do_downloader {
 		foreach(@target) {
 			my @rows = @$_;
 			my $host = shift(@rows);
-			foreach my $item(@rows) {
+			foreach my $item(filter_items(@rows)) {
 				next unless($item && @{$item});
 				my $dbname = $item->[4] || $host;
 				my $title = $item->[1] . "/$dbname";# . $item->[0];
-				next unless(check_trash($title));
 				push @request,$title;
 				push @{$r{directory}},$title;
 				$count++;
@@ -338,6 +414,9 @@ sub do_saveurl {
 			print STDERR "Error: ",$name,"\n";
 			return $EXIT_CODE{FAILED};
 		}
+		if(!validate_item($id,$name)) {
+			return $EXIT_CODE{DO_NOTHING};
+		}
 		use MyPlace::URLRule::OO;
 		my $action = $OPTS->{'force'} ? 'DOWNLOAD' : $OPTS->{'no-download'} ? 'DATABASE' : 'DOWNLOAD';
 		$action = '!' . $action  if($OPTS->{'force-action'});
@@ -348,6 +427,9 @@ sub do_saveurl {
 				'include'=>$OPTS->{include},
 				'exclude'=>$OPTS->{exclude},
 		);
+		if($name) {
+			show_directory($name);
+		}
 		$URLRULE->autoApply({
 				count=>1,
 				level=>0,
@@ -382,6 +464,17 @@ sub query {
 			}
 			else {
 				push @target,[$db,@result];
+			}
+		}
+		elsif($OPTS->{item}) {
+			foreach my $keyword(@$NAMES) {
+				my($status,@result) = $SQ->find_item($keyword);
+				if(!$status) {
+					print STDERR "[$db] Error: ",@result,"\n";
+				}
+				else {
+					push @target,[$db,@result];
+				}
 			}
 		}
 		else {
@@ -665,6 +758,10 @@ sub execute {
 	$self->{COMMAND} = "SAVEURL" if($OPT->{saveurl});
 	$self->{DATABASE} = [$OPT->{database} ? split(/\s*,\s*/, $OPT->{database}) : @DEFAULT_HOST];
 	$self->{options} = $OPT;
+
+	######DISABLE FORCE MODE#####
+	#delete $OPT->{force};
+
 	return $self->process_command($self->{COMMAND});
 }
 

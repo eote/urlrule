@@ -40,12 +40,8 @@ if($OPTS{'help'} or $OPTS{'manual'}) {
     exit $v;
 }
 
-use MyPlace::URLRule qw/parse_rule apply_rule set_callback/;
+use MyPlace::URLRule;
 use Data::Dumper;
-
-set_callback('apply_rule',sub {
-	print Data::Dumper->Dump([\@_],['*apply_rule']);
-});
 my $url = shift;
 my $level = shift;
 if(!$level) {
@@ -58,9 +54,12 @@ elsif($level !~ /^\d+$/) {
 	unshift @ARGV,$level;
 	$level = 0;
 }
-my $rule = parse_rule($url,$level);
+
+my $uh = new MyPlace::URLRule;
+my $rule = $uh->rule($url,$level);
 print STDERR Data::Dumper->Dump([$rule],['*rule']) unless(@ARGV);
-my ($status,$result) = apply_rule($rule);
+#my ($status,$result) = $uh->process($rule);
+my ($status,$result) = $uh->process($url,$level);
 
 sub error {
 	my $r = shift;
@@ -73,6 +72,9 @@ sub error {
 	}
 }
 
+if(!($status or $result)) {
+	exit 3;
+}
 if(!$result) {
 	error("Empty response");
 	exit 2;
